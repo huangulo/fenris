@@ -1,8 +1,9 @@
 # PROJECT AUDIT: FENRIS
 
 **Generated:** 2026-03-22
+**Last Updated:** 2026-03-23
 **Auditor:** Claude Code (claude-sonnet-4-6)
-**Project Version:** 0.1.0 (MVP)
+**Project Version:** 0.1.1 (post-fix MVP)
 
 ---
 
@@ -10,17 +11,17 @@
 
 **Project Name:** Fenris
 **Description:** Self-hosted predictive infrastructure monitoring system for homelabs and small ops teams
-**Status:** Early development stage — NOT production-ready
-**Total Files:** ~28
-**Code Lines:** ~977 TypeScript (server)
-**Repository:** Not a git repo (extracted project)
+**Status:** Functional MVP — all critical blockers resolved, frontend live, stack deployable
+**Total Files:** ~38
+**Code Lines:** ~1 150 TypeScript (server) · ~350 TypeScript/TSX (web)
+**Repository:** Git repository (initialized 2026-03-23)
 
 ---
 
 ## 1. Project Structure
 
 ```
-/home/lechauve/ally_workspace/fenris/
+/root/workspace/fenris/
 ├── server/                          # Node.js/TypeScript backend
 │   ├── src/
 │   │   ├── index.ts                # Main entry point and orchestration
@@ -29,7 +30,7 @@
 │   │   │   └── routes.ts           # All API endpoints and service initialization
 │   │   ├── db/
 │   │   │   ├── client.ts           # PostgreSQL connection pool management
-│   │   │   └── schema.sql          # Database schema (tables, indexes, triggers)
+│   │   │   └── schema.sql          # Database schema (tables, indexes, triggers, seed)
 │   │   ├── collectors/
 │   │   │   └── system.ts           # System metrics collection (CPU/RAM/disk/network)
 │   │   ├── engine/
@@ -37,21 +38,24 @@
 │   │   └── alerts/
 │   │       └── discord.ts          # Discord webhook alert formatting and delivery
 │   ├── package.json                # Server npm dependencies and scripts
+│   ├── pnpm-lock.yaml              # Locked dependency manifest
 │   ├── tsconfig.json               # TypeScript compiler configuration
-│   ├── tsup.config.ts              # ESM build configuration
-│   └── Dockerfile                  # Docker image build for server
-├── web.disabled/                    # React frontend (disabled at MVP stage)
+│   ├── tsup.config.ts              # ESM build configuration (no dts)
+│   └── Dockerfile                  # Docker image build for server (pnpm, non-root)
+├── web/                             # React frontend (enabled)
 │   ├── src/
 │   │   ├── main.tsx                # React app entry point
-│   │   ├── App.tsx                 # Main dashboard component (metrics + alerts)
-│   │   └── index.css               # Tailwind CSS base styles
+│   │   ├── App.tsx                 # Dashboard: metrics cards, sparklines, alerts panel
+│   │   └── index.css               # Tailwind CSS directives
 │   ├── index.html                  # HTML template
 │   ├── package.json                # Frontend npm dependencies
+│   ├── tailwind.config.js          # Tailwind content paths
+│   ├── postcss.config.js           # PostCSS pipeline (Tailwind + autoprefixer)
 │   ├── tsconfig.json               # Frontend TypeScript config
-│   ├── vite.config.ts              # Vite build configuration
-│   ├── Dockerfile                  # Multi-stage nginx build for web
-│   └── nginx.conf                  # Nginx reverse proxy / SPA routing config
-├── docker-compose.yml              # Container orchestration (postgres + server)
+│   ├── vite.config.ts              # Vite build + dev proxy
+│   ├── Dockerfile                  # Multi-stage nginx build (accepts VITE_API_KEY ARG)
+│   └── nginx.conf                  # Nginx static serve + /api/ proxy_pass
+├── docker-compose.yml              # Container orchestration (postgres + server + web)
 ├── .env.example                    # Environment variable template
 ├── .gitignore                      # Git ignore rules
 ├── fenris.yaml.example             # Application configuration template
@@ -65,41 +69,51 @@
 ## 2. Architecture
 
 ### Entry Points
-- **Server:** `server/src/index.ts` — loads config, initializes DB, registers routes, starts metric collection loop
-- **Frontend:** `web.disabled/src/main.tsx` — React root mount (disabled)
-- **Docker:** `docker-compose.yml` — orchestrates postgres + server services
+- **Server:** `server/src/index.ts` — loads config, initializes DB, registers routes, starts metric collection and retention loops
+- **Frontend:** `web/src/main.tsx` — React root mount, served by nginx at port 8081
+- **Docker:** `docker-compose.yml` — orchestrates postgres + server + web services
 
 ### Layers
 
 ```
-┌──────────────────────────────────────────────────────┐
-│                    HTTP API (Fastify)                  │
-│              server/src/api/routes.ts                  │
-├──────────────┬───────────────────┬────────────────────┤
-│  Collectors  │  Anomaly Engine   │  Alert Delivery    │
-│  system.ts   │  anomaly.ts       │  discord.ts        │
-├──────────────┴───────────────────┴────────────────────┤
-│               Database Layer (pg pool)                 │
-│               server/src/db/client.ts                  │
-├───────────────────────────────────────────────────────┤
-│               PostgreSQL 15 (docker)                   │
-└───────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                nginx reverse proxy (:8081)                   │
+│                     web/nginx.conf                          │
+│      static React SPA  │  /api/* → proxy_pass server:3200  │
+├─────────────────────────────────────────────────────────────┤
+│                   HTTP API (Fastify 5)                       │
+│               server/src/api/routes.ts                       │
+│          onRequest hook: X-API-Key validation               │
+├──────────────┬───────────────────┬─────────────────────────┤
+│  Collectors  │  Anomaly Engine   │  Alert Delivery          │
+│  system.ts   │  anomaly.ts       │  discord.ts              │
+├──────────────┴───────────────────┴─────────────────────────┤
+│               Database Layer (pg pool)                       │
+│               server/src/db/client.ts                        │
+├─────────────────────────────────────────────────────────────┤
+│               PostgreSQL 15 (docker)                         │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ### Data Flow
 
 1. **Metrics collection** (every 30s, via `setInterval` in `index.ts`):
-   - `SystemCollector.collectAll()` → gathers CPU/RAM/disk/network via `systeminformation`
-   - POSTs results to own `/api/v1/metrics` HTTP endpoint (internal self-call)
+   - `SystemCollector.collectAll()` → gathers CPU/RAM/disk/network via `systeminformation` + `os.loadavg()`
+   - Calls `ingestMetrics()` directly (no self-HTTP; extracted from route handler)
 
-2. **Metrics ingestion** (`POST /api/v1/metrics`):
+2. **Metrics ingestion** (`ingestMetrics()` and `POST /api/v1/metrics`):
    - Inserts each metric into `metrics` table
-   - Runs Z-score anomaly detection via `AnomalyDetector`
+   - Calls `detector.addMetric()` to accumulate history, then `detectAnomaly()`
    - If anomaly: creates row in `alerts` table, sends Discord embed
 
-3. **Frontend polling** (every 30s, disabled):
-   - Fetches `/api/v1/metrics` and `/api/v1/alerts`
-   - Renders in dark-themed dashboard
+3. **Data retention** (every 1h, via `setInterval` in `index.ts`):
+   - Parameterized `DELETE` removes metrics older than `retention.metrics_days` (default 30)
+   - Parameterized `DELETE` removes alerts older than `retention.alerts_days` (default 90)
+
+4. **Frontend polling** (every 30s):
+   - Fetches `/api/v1/servers/1/metrics?limit=80` and `/api/v1/alerts?limit=30`
+   - Renders dark-themed dashboard with sparklines and alert panel
+   - All requests carry `X-API-Key` header (baked in at Vite build time)
 
 ### External Services
 | Service | Purpose | Integration |
@@ -115,8 +129,8 @@
 | Package | Version | Purpose | Status |
 |---------|---------|---------|--------|
 | `fastify` | ^5.0.0 | HTTP framework | Used |
-| `@fastify/cors` | ^9.0.0 | CORS handling | Used |
-| `@fastify/env` | ^4.0.0 | Env var validation | Registered but schema empty |
+| `@fastify/cors` | ^10.0.0 | CORS handling | Used (bumped from ^9 for Fastify 5 compat) |
+| `@fastify/env` | ^4.0.0 | Env var validation | Imported but not actively used |
 | `pg` | ^8.11.0 | PostgreSQL client | Used |
 | `js-yaml` | ^4.1.0 | YAML config parsing | Used |
 | `pino` | ^9.0.0 | JSON structured logging | Used |
@@ -127,25 +141,25 @@
 | Package | Version | Purpose | Status |
 |---------|---------|---------|--------|
 | `typescript` | ^5.5.0 | Type checking | Used |
-| `tsup` | ^8.3.0 | ESM bundler | Used |
+| `tsup` | ^8.3.0 | ESM bundler | Used (dts disabled — server binary, not library) |
 | `@types/node` | ^22.0.0 | Node.js type definitions | Used |
 | `@types/pg` | ^8.11.0 | pg type definitions | Used |
-| `@types/js-yaml` | (missing) | js-yaml types | **MISSING** — implicit any |
+| `@types/js-yaml` | (missing) | js-yaml types | **MISSING** — implicit any on `load()` return |
 
-### Frontend (web.disabled)
+### Frontend (`web/`)
 | Package | Version | Purpose | Status |
 |---------|---------|---------|--------|
 | `react` | ^18.3.0 | UI library | Used |
 | `react-dom` | ^18.3.0 | DOM rendering | Used |
-| `@tanstack/react-query` | ^5.0.0 | Data fetching | **UNUSED** — not used in App.tsx |
-| `recharts` | ^2.12.0 | Charts library | **UNUSED** — not used in App.tsx |
 | `vite` | ^5.3.0 | Build tool | Used |
 | `@vitejs/plugin-react` | ^4.3.0 | Vite React plugin | Used |
+| `tailwindcss` | ^3.4.0 | Utility CSS | Used |
+| `postcss` | ^8.4.0 | CSS pipeline | Used |
+| `autoprefixer` | ^10.4.0 | Vendor prefixes | Used |
 
 **Flags:**
-- `@tanstack/react-query` and `recharts` are installed but completely unused — dead weight until frontend is activated
-- `@types/js-yaml` is missing from server dev dependencies
-- Tailwind CSS classes used in frontend but Tailwind is not in package.json (likely expected globally or via CDN)
+- `@types/js-yaml` is missing from server dev dependencies — `load()` return type is `unknown`, cast with `as Config`
+- `@fastify/env` is imported but the registered schema is empty — validation provides no benefit
 
 ---
 
@@ -158,12 +172,12 @@
 id           SERIAL PRIMARY KEY
 name         VARCHAR(255) NOT NULL UNIQUE
 ip_address   VARCHAR(45) NOT NULL
-api_key      VARCHAR(255) NOT NULL UNIQUE
-created_at   TIMESTAMP DEFAULT NOW()
-last_heartbeat TIMESTAMP
+api_key      VARCHAR(64) NOT NULL UNIQUE
+created_at   TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+last_heartbeat TIMESTAMP WITH TIME ZONE
 ```
 - Purpose: Agent registry for multi-server support (v0.2+)
-- Currently: server_id=1 is hardcoded in collector
+- Currently: `server_id=1` is hardcoded in collector; a default row `(1, 'local', '127.0.0.1', 'local-default-key')` is seeded on schema init via `ON CONFLICT DO NOTHING`
 
 #### Table: `metrics`
 ```sql
@@ -171,7 +185,7 @@ id           SERIAL PRIMARY KEY
 server_id    INTEGER REFERENCES servers(id) ON DELETE CASCADE
 metric_type  VARCHAR(50) NOT NULL   -- 'cpu' | 'memory' | 'disk' | 'network'
 value        JSONB NOT NULL
-timestamp    TIMESTAMP DEFAULT NOW()
+timestamp    TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 ```
 - Indexes: `server_id`, `metric_type`, `timestamp DESC`, compound `(server_id, timestamp DESC)`
 - JSONB `value` stores flexible metric payloads (e.g., `{ usage_percent, load_avg }` for CPU)
@@ -186,51 +200,50 @@ metric_type      VARCHAR(50)
 threshold_value  JSONB
 actual_value     JSONB
 acknowledged     BOOLEAN DEFAULT FALSE
-created_at       TIMESTAMP DEFAULT NOW()
+created_at       TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 ```
 - Indexes: `server_id`, `severity`, `acknowledged`, `created_at DESC`
 
-#### Trigger: `update_timestamp` — **BROKEN**
+#### Trigger: `update_timestamp`
 ```sql
--- INVALID SYNTAX — uses "771506" as dollar-quote delimiter (random number)
 CREATE OR REPLACE FUNCTION update_timestamp()
-RETURNS TRIGGER AS 771506   -- ← INVALID, should be $$ or $fn$
+RETURNS TRIGGER AS $$
 BEGIN
   NEW.last_heartbeat = NOW();
   RETURN NEW;
 END;
-771506 LANGUAGE plpgsql;    -- ← repeated token, invalid
+$$ LANGUAGE plpgsql;
 ```
-**This will prevent schema initialization from succeeding.**
+Fixed: was using `771506` as dollar-quote delimiter. Now uses standard `$$`.
 
 ### Migrations
 - No migration framework (Flyway, node-pg-migrate, etc.)
-- Schema applied once via `initializeTables()` in `client.ts`
-- `initializeTables()` itself has a broken import (see Known Issues)
+- Schema applied once via `initializeTables()` in `client.ts` on every startup (idempotent — all statements use `IF NOT EXISTS` / `ON CONFLICT DO NOTHING`)
 
 ### Retention Policy
-- Configured in `fenris.yaml`: metrics 30 days, alerts 90 days
-- **No cleanup job implemented** — retention is documented but not enforced
+- Configured via `config.retention.metrics_days` / `alerts_days` (defaults: 30 / 90)
+- Enforced: hourly `setInterval` in `index.ts` runs parameterized `DELETE` queries and logs row counts
 
 ---
 
 ## 5. API Surface
 
-All endpoints are in `server/src/api/routes.ts`. **No authentication is required on any endpoint.**
+All endpoints are in `server/src/api/routes.ts`. Authentication is enforced via an `onRequest` Fastify hook.
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| `GET` | `/health` | None | Liveness probe → `{ status, timestamp }` |
-| `POST` | `/api/v1/metrics` | None | Ingest array of Metric objects; runs anomaly detection; fires alerts |
-| `GET` | `/api/v1/servers` | None | List all registered servers ordered by last_heartbeat DESC |
-| `GET` | `/api/v1/servers/:id/metrics` | None | Last N metrics for a server (`?limit=100`) |
-| `GET` | `/api/v1/alerts` | None | List alerts (`?limit=50`, `?acknowledged=true\|false`) |
-| `POST` | `/api/v1/alerts/:id/acknowledge` | None | Mark alert acknowledged |
-| `GET` | `/api/v1/config` | None | Return safe config subset (excludes DB URL; **does not exclude webhook URL**) |
+| `GET` | `/health` | **Exempt** | Liveness probe → `{ status, timestamp }` |
+| `POST` | `/api/v1/metrics` | X-API-Key | Ingest array of Metric objects; runs anomaly detection; fires alerts |
+| `GET` | `/api/v1/servers` | X-API-Key | List all registered servers ordered by last_heartbeat DESC |
+| `GET` | `/api/v1/servers/:id/metrics` | X-API-Key | Last N metrics for a server (`?limit=100`) |
+| `GET` | `/api/v1/alerts` | X-API-Key | List alerts (`?limit=50`, `?acknowledged=true\|false`) |
+| `POST` | `/api/v1/alerts/:id/acknowledge` | X-API-Key | Mark alert acknowledged |
+| `GET` | `/api/v1/config` | **Exempt** | Return safe config subset — `server` block and `webhook_url` stripped |
 
-### Notes
-- `POST /api/v1/metrics` anomaly detection flow has a bug: calls `detector.getHistory()` where `detector.addMetric()` should be called first — history is never populated from ingested data
-- `GET /api/v1/config` response should strip `alerts.discord.webhook_url` but currently does not
+### Authentication
+- `onRequest` hook reads `X-API-Key` header and queries `SELECT id FROM servers WHERE api_key = $1`
+- Missing or unrecognised key → `401 { error: "unauthorized" }`
+- `/health` and `/api/v1/config` are explicitly exempt
 
 ---
 
@@ -242,10 +255,11 @@ All endpoints are in `server/src/api/routes.ts`. **No authentication is required
 |----------|----------|---------|-------------|
 | `PORT` | No | `3200` | Server listen port |
 | `NODE_ENV` | No | `production` | Execution environment |
-| `DATABASE_URL` | **Yes** | `postgresql://fenris:fenris@localhost:5432/fenris` | PostgreSQL connection string |
-| `POSTGRES_PASSWORD` | **Yes** | `fenris` | Postgres password (used by docker-compose) |
+| `DATABASE_URL` | **Yes** | `postgresql://fenris:CHANGE_ME_BEFORE_DEPLOY@localhost:5432/fenris` | PostgreSQL connection string |
+| `POSTGRES_PASSWORD` | **Yes** | `CHANGE_ME_BEFORE_DEPLOY` | Postgres password (used by docker-compose) |
 | `DISCORD_WEBHOOK_URL` | No | — | Discord webhook for alerts |
 | `FENRIS_CONFIG` | No | `/app/fenris.yaml` | Path to YAML config file |
+| `VITE_API_KEY` | **Yes (web)** | `local-default-key` | API key baked into the frontend bundle at build time |
 
 ### Config File (`fenris.yaml.example`)
 
@@ -300,92 +314,89 @@ logging:
   max_files: 5
 ```
 
+**Note:** `js-yaml` reads `${DATABASE_URL}` as a literal string — it does not expand shell variables. When using a `fenris.yaml`, write the values directly. The server falls back to `process.env.DATABASE_URL` when the file is absent, which is the recommended approach for Docker deployments.
+
 ### Config Loading (`index.ts`)
 - Tries to read `FENRIS_CONFIG` path as YAML
-- Falls back to hardcoded defaults if file missing
+- Falls back to hardcoded defaults reading from env vars if file is missing
 - No schema validation on loaded config
 
 ---
 
 ## 7. Known Issues
 
-### Critical (Blocking Deployment)
+All critical deployment blockers and short-term security/quality issues from the original audit have been resolved. The following items remain open.
 
-1. **`schema.sql` — SQL syntax error in trigger function** (`schema.sql:49-55`)
-   - Dollar-quote delimiter is `771506` (a random number) instead of `$$`
-   - Schema initialization will fail at this line, preventing table creation
+### Open — Bugs / Limitations
 
-2. **`client.ts` — Invalid `initializeTables()` import** (`client.ts:52`)
-   - Uses `import schemaSQL from '../db/schema.sql' assert { type: 'json' }`
-   - SQL files cannot be imported as JSON; this will throw at runtime
-   - Should read the file with `fs.readFileSync` or embed the SQL as a string
+1. **`system.ts` — `server_id` hardcoded to `1`** (`system.ts`)
+   - The collector always emits `server_id: 1`; the multi-server agent architecture from the v0.2 roadmap has not been built
+   - Impact: benign for single-server homelabs; blocks any multi-host deployment
 
-3. **`routes.ts` — Anomaly detector never receives data** (`routes.ts:73`)
-   - Calls `detector.getHistory(metricType)` to check window size but never calls `detector.addMetric()` before running detection
-   - The detector's history is always empty; `min_samples` threshold is never reached; anomaly detection is effectively disabled
+2. **`index.ts` — `parseInterval()` does not accept bare-number strings**
+   - The rewritten parser requires an explicit `s`/`m`/`h` suffix and throws on unrecognised formats
+   - A `fenris.yaml` with `scrape_interval: 30` (no suffix) will crash at startup; must be `"30s"`
 
-4. **`index.ts` — Self-referential HTTP call for metrics ingestion** (`index.ts:90-94`)
-   - The metrics collection loop POSTs to `http://localhost:${PORT}/api/v1/metrics` (its own endpoint)
-   - Creates a startup race condition (server may not be ready when first tick fires)
-   - Should call service methods directly
+3. **`@fastify/env` schema is empty**
+   - The plugin is registered but its validation schema has no properties, so it performs no env validation
+   - Missing required vars (e.g. `DATABASE_URL`) fail silently at connection time rather than at startup
 
-5. **No authentication on any API endpoint**
-   - `POST /api/v1/metrics`, `POST /api/v1/alerts/:id/acknowledge`, etc. are all publicly writable
-   - `Server.api_key` field exists in schema but is never read/validated
+4. **`@types/js-yaml` missing from dev dependencies**
+   - `load()` returns `unknown`; cast to `Config` with `as Config` is unchecked
+   - Fix: `pnpm add -D @types/js-yaml` in `server/`
 
-### Bugs
+### Open — Security
 
-6. **`index.ts` — `parseInterval()` regex broken** (`index.ts:103`)
-   - Regex `\d+` matches digits but the result is multiplied by 1000 assuming it's in seconds
-   - Input `"30s"` parses as `30000` but only accidentally — the `s` suffix is silently ignored
-   - Input `"5m"` would parse as `5000` ms (5 seconds, not 5 minutes) — wrong
+5. **`CORS origin: true` allows all origins**
+   - Acceptable for an isolated homelab network; risky if the server port is publicly reachable
+   - Fix: restrict to the web container origin in production
 
-7. **`system.ts` — `collectCPU()` calls `si.currentLoad()` twice** (`system.ts:31-32`)
-   - Two separate `await si.currentLoad()` calls in the same function
-   - Wasteful; second result is used, first is discarded
+6. **No rate limiting on any endpoint**
+   - Authenticated endpoints can be brute-forced for API keys; unauthenticated `/health` is unbounded
+   - Fix: add `@fastify/rate-limit`
 
-8. **`system.ts` — `lastNetworkStats` map populated but delta never used**
-   - `lastNetworkStats` is updated but the delta logic is commented out / incomplete
-   - Network metrics report raw cumulative bytes, not rate
+7. **No input validation on `POST /api/v1/metrics` body**
+   - Fastify JSON Schema validates the shape but does not constrain value ranges or string lengths
+   - A malformed or oversized payload passes through to the DB
+   - Fix: add Zod or stricter JSON Schema constraints on `metric_type` and `value`
 
-9. **`system.ts` — `server_id` hardcoded to `1`** (`system.ts:80`)
-   - Breaks multi-server support; no mechanism to identify the host
+8. **`VITE_API_KEY` is baked into the frontend bundle at build time**
+   - The key is visible in the compiled JS to anyone who can load the page
+   - For a private homelab this is acceptable; for any internet-exposed deployment, the dashboard should sit behind a separate auth layer (e.g. HTTP basic auth in nginx, VPN, or Authelia)
 
-10. **`App.tsx` — Wrong API endpoint path** (`App.tsx:39`)
-    - Fetches `/api/v1/metrics?limit=1` which does not exist
-    - Correct path is `/api/v1/servers/:id/metrics`
+### Open — Code Quality
 
-### Security Concerns
+9. **No linting or formatting config**
+   - No `.eslintrc`, `.prettierrc`, or `biome.json` in either `server/` or `web/`
 
-11. **`/api/v1/config` leaks Discord webhook URL**
-    - The endpoint returns the full config object; `alerts.discord.webhook_url` is not stripped
+10. **No test files exist anywhere in the project**
+    - 0% coverage across server and web
 
-12. **Default PostgreSQL password `fenris`** in `.env.example` and `docker-compose.yml`
-    - Likely to be left unchanged in homelab deployments
+11. **No migration framework**
+    - Schema changes require manual `ALTER TABLE` or a full volume wipe; there is no versioned migration history
 
-13. **`CORS origin: true`** allows all origins — acceptable for homelab, risky if exposed
+### Resolved (for reference)
 
-14. **No rate limiting** on any endpoint
-
-### Code Quality / TODOs
-
-15. **`nginx.conf` — `try_files` directive incorrect** (`nginx.conf:8`)
-    - `try_files / /index.html;` should be `try_files $uri /index.html;`
-    - Breaks SPA client-side routing
-
-16. **`server/Dockerfile` — uses `npm` instead of `pnpm`**
-    - `package.json` specifies `pnpm` as package manager but Dockerfile uses `npm install`
-
-17. **`server/Dockerfile` — runs as root**
-    - No `USER` directive; process runs as root inside container
-
-18. **No data retention enforcement**
-    - `fenris.yaml` specifies `retention.metrics_days: 30` but no background job or scheduled query deletes old rows
-
-19. **No linting or formatting config**
-    - No `.eslintrc`, `.prettierrc`, or similar
-
-20. **No test files exist anywhere in the project**
+| # | Issue | Fix applied |
+|---|-------|-------------|
+| — | `schema.sql` trigger used `771506` as dollar-quote delimiter | Replaced with `$$` |
+| — | `client.ts` imported schema.sql as JSON | Replaced with `fs.readFileSync` + `import.meta.url`-derived `__dirname` |
+| — | `routes.ts` never called `detector.addMetric()` | Added call before `detectAnomaly()` |
+| — | `index.ts` self-HTTP POST loop | Extracted `ingestMetrics()` service fn; collection loop calls it directly |
+| — | No API authentication | `onRequest` hook validates `X-API-Key` against `servers.api_key` |
+| — | `/api/v1/config` leaked `webhook_url` | Deep-clone + `delete` before send; `server` block also stripped |
+| — | `parseInterval()` silently ignored `s`/`m`/`h` suffixes | Rewritten to require suffix; `"5m"` → 300 000 ms |
+| — | Default Postgres password `fenris` | Replaced with `CHANGE_ME_BEFORE_DEPLOY` placeholder in both files |
+| — | `collectCPU()` called `si.currentLoad()` twice | Removed duplicate call |
+| — | `usage_percent` multiplied by 100 (e.g. 2511 instead of 25) | `currentLoad` is already 0-100; removed `× 100` |
+| — | `load_avg` used non-existent `avgLoad1`/`avgLoad5` fields | Replaced with `os.loadavg()` → standard [1m, 5m, 15m] tuple |
+| — | Network metrics reported cumulative bytes | Computes `(current − last) / elapsedSeconds`; reports 0 on first tick |
+| — | `nginx.conf` `try_files / /index.html` | Fixed to `try_files $uri $uri/ /index.html` |
+| — | `server/Dockerfile` used `npm install` | Switched to pnpm via corepack + `pnpm install --frozen-lockfile` |
+| — | `server/Dockerfile` ran as root | Added `adduser fenris` + `USER fenris` before `CMD` |
+| — | No data retention enforcement | Hourly `setInterval` with parameterized `DELETE` queries; logs row counts |
+| — | Frontend disabled (`web.disabled/`) | Renamed to `web/`, docker-compose web service added, full dashboard built |
+| — | `App.tsx` wrong API path `/api/v1/metrics` | Fixed to `/api/v1/servers/1/metrics` |
 
 ---
 
@@ -403,8 +414,9 @@ There are no test files, no test runner configuration, and no testing dependenci
 | `system.ts` — metric collection and normalization | Medium | Unit with mocked `systeminformation` |
 | `discord.ts` — payload formatting, `shouldAlert()` filtering | Medium | Unit |
 | `client.ts` — connection pool, query error handling | Medium | Integration |
-| `parseInterval()` — various format strings | Low | Unit |
+| `parseInterval()` — `s`/`m`/`h` formats, error on bad input | Low | Unit |
 | Database schema — constraints, indexes, FK cascades | Medium | Integration |
+| `App.tsx` — render with mock API, ack button interaction | Medium | Component (Vitest + Testing Library) |
 
 ---
 
@@ -412,86 +424,83 @@ There are no test files, no test runner configuration, and no testing dependenci
 
 ### Local Development
 ```bash
+# Backend
 cd server
-npm install       # or pnpm install
-npm run dev       # tsup --watch → restarts on change
+pnpm install
+pnpm run dev        # tsup --watch → restarts on change
+
+# Frontend
+cd web
+npm install
+npm run dev         # vite dev server at :5173, proxies /api → localhost:3200
 ```
 
 ### Production Build
 ```bash
 cd server
-npm run build     # tsup → outputs dist/index.js + .d.ts
-npm start         # node dist/index.js
+pnpm run build      # tsup → outputs dist/index.js
+node dist/index.js
+
+cd web
+npm run build       # vite → outputs dist/
 ```
 
 ### Docker Build
 ```bash
-# Server image
-docker build -t fenris-server ./server
-
-# Full stack
-docker-compose up -d
+# Full stack (server + postgres + web)
+POSTGRES_PASSWORD=yourpassword VITE_API_KEY=your-api-key docker compose up -d --build
 ```
 
 ### Docker Compose Services
 | Service | Image | Port | Health Check |
 |---------|-------|------|-------------|
-| `postgres` | postgres:15-alpine | (internal only) | `pg_isready` every 10s |
+| `postgres` | postgres:15-alpine | (internal) | `pg_isready` every 10s |
 | `server` | built from `./server/Dockerfile` | `3200:3200` | `wget /health` every 30s |
-
-### Build Issues
-- `server/Dockerfile` uses `npm install` but project uses `pnpm` — lockfile ignored
-- `tsc` is installed globally in the Dockerfile but `tsup` handles compilation — redundant
-- Frontend `web.disabled/` is not included in `docker-compose.yml` — must be manually added when re-enabled
+| `web` | built from `./web/Dockerfile` | `8081:80` | (none configured) |
 
 ### CI/CD
 **None present.** No `.github/workflows/`, `.gitlab-ci.yml`, or any pipeline configuration exists.
 
 ---
 
-## 10. Feature Completeness (v0.1 scope)
+## 10. Feature Completeness
+
+### v0.1.1 — Current State
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| System metrics collection (CPU/RAM/disk/network) | Implemented | Works but has bugs (double call, no delta) |
-| Z-score anomaly detection | Implemented | Never receives data due to routes.ts bug |
-| PostgreSQL storage | Implemented | Schema broken (trigger syntax error) |
-| Discord alerts | Implemented | Relies on broken anomaly pipeline |
-| YAML configuration | Implemented | No schema validation |
-| Docker Compose deployment | Implemented | Minor Dockerfile issues |
-| Web dashboard | Partially implemented | Disabled, has endpoint path bug |
-| API key authentication | Schema only | Field exists, never validated |
-| Data retention cleanup | Config only | No enforcement job |
+| System metrics collection — CPU | **Working** | Single `si.currentLoad()` call; correct 0-100% value; `os.loadavg()` for [1m, 5m, 15m] |
+| System metrics collection — Memory | **Working** | `(total−available)/total`; GiB fields in payload |
+| System metrics collection — Disk | **Working** | Matches by `d.mount`, `available_gb` included; fallback to largest non-tmpfs |
+| Docker container monitoring | **Working** | `DockerCollector` via dockerode; CPU%/mem/net/uptime per container; graceful degradation if socket absent |
+| System metrics collection — Network | **Working** | Per-interval bytes/sec delta (rx + tx); reports 0 on first tick |
+| Z-score anomaly detection | **Working** | `addMetric()` called before `detectAnomaly()`; accumulates history; fires after min_samples=30 |
+| PostgreSQL storage | **Working** | Schema initializes cleanly; trigger syntax fixed; idempotent on restart |
+| Data retention enforcement | **Working** | Hourly DELETE job; defaults to 30d metrics / 90d alerts; logs row counts |
+| API key authentication | **Working** | `onRequest` hook; all endpoints except `/health` and `/api/v1/config` require valid key |
+| Discord alerts | **Working** | Fires when anomaly detected; severity derived from threshold config |
+| `/api/v1/config` credential safety | **Working** | `server` block and `webhook_url` stripped before response |
+| YAML configuration | **Working** | Falls back to env-var defaults when file absent (recommended for Docker) |
+| Docker Compose deployment | **Working** | Three-service stack (postgres + server + web); pnpm lockfile; non-root server process |
+| Web dashboard — metrics panel | **Working** | 4 cards (CPU, memory, disk, network); 20-point SVG sparkline; green/yellow/red at 60/80% |
+| Web dashboard — alerts panel | **Working** | Severity badges; acknowledge button; acknowledged rows dim; active count in header |
+| Web dashboard — auto-refresh | **Working** | 30-second polling; 1-second clock; last-refresh timestamp |
+| Web dashboard — API key auth | **Working** | `VITE_API_KEY` baked at build time; all requests carry `X-API-Key` header |
+| nginx proxy | **Working** | `/api/*` proxied to `server:3200`; SPA routing via `try_files $uri $uri/ /index.html` |
+| `parseInterval()` | **Working** | Handles `s`/`m`/`h` suffixes correctly; throws on unrecognised format |
 
----
+### v0.2 — Roadmap
 
-## 11. Recommendations by Priority
-
-### Immediate (must fix before first use)
-1. Fix `schema.sql` trigger: replace `771506` with `$$`
-2. Fix `client.ts` schema initialization: use `fs.readFileSync` to load SQL
-3. Fix `routes.ts`: call `detector.addMetric(metricType, value)` before `detectAnomaly()`
-4. Fix `index.ts`: call `collector.collectAll()` and route methods directly instead of self-HTTP
-
-### Short-term (before sharing/exposing)
-5. Implement API key authentication (validate `X-API-Key` header against `servers.api_key`)
-6. Strip `webhook_url` from `/api/v1/config` response
-7. Fix `parseInterval()` to handle `s`/`m`/`h` suffixes
-8. Fix `nginx.conf` `try_files $uri /index.html`
-9. Fix `App.tsx` endpoint path to `/api/v1/servers/1/metrics`
-10. Add data retention cron or scheduled DELETE query
-
-### Medium-term (quality)
-11. Add unit tests for `anomaly.ts`, `discord.ts`, `parseInterval`
-12. Add integration tests for metric ingestion + alert creation flow
-13. Add `@types/js-yaml` to dev dependencies
-14. Add ESLint + Prettier configs
-15. Add non-root `USER` to `server/Dockerfile`
-16. Add input validation (Zod or JSON Schema) on API request bodies
-
-### Long-term (roadmap)
-17. Multi-server agent architecture (server_id discovery, registration flow)
-18. Docker container monitoring
-19. Additional alert channels (Slack, email)
-20. Re-enable and complete frontend with real charts (Recharts already installed)
-21. CI/CD pipeline (GitHub Actions)
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Multi-server agent architecture | **Not started** | `server_id` hardcoded to 1; need agent registration, per-host API keys, heartbeat updates |
+| Docker container monitoring | **Working** | `DockerCollector` via dockerode; `GET /api/v1/docker/containers` and `/:name/metrics`; anomaly detection + state-transition alerts |
+| Slack / email alert channels | **Not started** | Only Discord webhook is implemented; channel abstraction in `alerts/` is straightforward |
+| CI/CD pipeline | **Not started** | No GitHub Actions or equivalent; would need build, type-check, test, image-push jobs |
+| Input validation (Zod) | **Not started** | `POST /api/v1/metrics` body validated only by Fastify JSON Schema; no domain constraints |
+| API rate limiting | **Not started** | `@fastify/rate-limit` would address brute-force on the auth hook |
+| Test suite | **Not started** | 0% coverage; Vitest is the natural choice for both server (unit/integration) and web (component) |
+| Config schema validation | **Not started** | Loaded YAML is cast unchecked; Zod would catch misconfigured `fenris.yaml` at startup |
+| Data retention — alerts cleanup | **Working** | Included in the hourly job alongside metrics cleanup |
+| Frontend charts (time-series) | **Deferred** | Sparklines are SVG; full recharts integration deferred until multi-metric history UX is designed |
+| Non-root nginx in web container | **Not done** | nginx runs as root; add `USER nginx` and adjust port binding to >1024 if hardening is needed |
