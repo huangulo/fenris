@@ -47,9 +47,9 @@ CREATE INDEX IF NOT EXISTS idx_alerts_timestamp ON alerts(created_at DESC);
 
 -- Trigger for automatic timestamp updates
 CREATE OR REPLACE FUNCTION update_timestamp()
-RETURNS TRIGGER AS 771506
+RETURNS TRIGGER AS $$
 BEGIN
   NEW.last_heartbeat = NOW();
   RETURN NEW;
 END;
-771506 LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql;
