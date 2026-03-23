@@ -50,6 +50,7 @@ export async function receiveMetrics(request: FastifyRequest<{ Body: Metric[] }>
         numericValue = metric.value.network!.rx_bytes;
       }
       
+      detector.addMetric(metric.metric_type, numericValue);
       const result = detector.detectAnomaly(metric.metric_type, numericValue);
       
       if (result.isAnomaly) {
