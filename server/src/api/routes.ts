@@ -1,0 +1,199 @@
+import { FastifyRequest, FastifyReply } from 'fastify';
+import { query } from '../db/client.js';
+import { SystemCollector } from '../collectors/system.js';
+import { AnomalyDetector } from '../engine/anomaly.js';
+import { DiscordAlert } from '../alerts/discord.js';
+import { Metric, Alert, Config } from '../types.js';
+
+// Global instances
+let collector: SystemCollector;
+let detector: AnomalyDetector;
+let discordAlert: DiscordAlert;
+let config: Config;
+
+export function initServices(cfg: Config): void {
+  config = cfg;
+  collector = new SystemCollector();
+  detector = new AnomalyDetector(cfg.anomaly_detection);
+  discordAlert = new DiscordAlert(
+    cfg.alerts.discord.webhook_url,
+    cfg.alerts.discord.enabled,
+    cfg.alerts.discord.severity_levels
+  );
+}
+
+export async function healthCheck(request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> {
+  return reply.send({ status: 'healthy', timestamp: new Date().toISOString() });
+}
+
+export async function receiveMetrics(request: FastifyRequest<{ Body: Metric[] }>, reply: FastifyReply): Promise<FastifyReply> {
+  try {
+    const metrics = request.body;
+    console.log('Received metrics:', metrics.length, 'records');
+    
+    const anomalyResults = new Map<string, { isAnomaly: boolean; severity: string; value: number }>();
+    
+    for (const metric of metrics) {
+      await query(
+        'INSERT INTO metrics (server_id, metric_type, value, timestamp) VALUES ($1, $2, $3::jsonb, $4)',
+        [metric.server_id, metric.metric_type, JSON.stringify(metric.value), metric.timestamp]
+      );
+      
+      let numericValue: number;
+      if (metric.metric_type === 'cpu') {
+        numericValue = metric.value.cpu!.usage_percent;
+      } else if (metric.metric_type === 'memory') {
+        numericValue = metric.value.memory!.used_percent;
+      } else if (metric.metric_type === 'disk') {
+        numericValue = metric.value.disk!.used_percent;
+      } else if (metric.metric_type === 'network') {
+        numericValue = metric.value.network!.rx_bytes;
+      }
+      
+      const result = detector.detectAnomaly(metric.metric_type, numericValue);
+      
+      if (result.isAnomaly) {
+        const severity = determineSeverity(metric.metric_type, numericValue, config.alerts.thresholds);
+        anomalyResults.set(metric.metric_type, {
+          isAnomaly: true,
+          severity,
+          value: numericValue
+        });
+      }
+    }
+    
+    for (const [metricType, anomaly] of anomalyResults.entries()) {
+      const alert: Alert = {
+        id: 0,
+        server_id: metrics[0].server_id,
+        severity: anomaly.severity,
+        message: 'Anomaly detected in ' + metricType.toUpperCase() + ' metrics',
+        metric_type: metricType as any,
+        actual_value: { value: anomaly.value },
+        threshold_value: { zscore: detector.getHistory(metricType).slice(-1)[0] },
+        acknowledged: false,
+        created_at: new Date()
+      };
+      
+      const alertResult = await query(
+        'INSERT INTO alerts (server_id, severity, message, metric_type, actual_value, threshold_value, acknowledged, created_at) VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8) RETURNING id',
+        [alert.server_id, alert.severity, alert.message, alert.metric_type, 
+         JSON.stringify(alert.actual_value), JSON.stringify(alert.threshold_value),
+         alert.acknowledged, alert.created_at]
+      );
+      
+      alert.id = alertResult.rows[0].id;
+      await discordAlert.send(alert);
+    }
+    
+    return reply.status(201).send({ success: true, anomaliesDetected: anomalyResults.size });
+  } catch (error) {
+    console.error('Error processing metrics:', error);
+    return reply.status(500).send({ error: 'Failed to process metrics' });
+  }
+}
+
+function determineSeverity(metricType: string, value: number, thresholds: Config['alerts']['thresholds']): 'info' | 'warning' | 'critical' {
+  const thresholdConfig = thresholds[metricType as keyof typeof thresholds];
+  if (!thresholdConfig || typeof thresholdConfig !== 'object') {
+    return 'info';
+  }
+  
+  const config = thresholdConfig as { warning?: number; critical?: number };
+  
+  if (config.critical && value >= config.critical) {
+    return 'critical';
+  } else if (config.warning && value >= config.warning) {
+    return 'warning';
+  }
+  
+  return 'info';
+}
+
+export async function listServers(request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> {
+  try {
+    const result = await query('SELECT * FROM servers ORDER BY last_heartbeat DESC NULLS LAST');
+    return reply.send(result.rows);
+  } catch (error) {
+    console.error('Error listing servers:', error);
+    return reply.status(500).send({ error: 'Failed to list servers' });
+  }
+}
+
+export async function getServerMetrics(request: FastifyRequest<{ Params: { id: string } }, reply: FastifyReply): Promise<FastifyReply> {
+  try {
+    const serverId = parseInt(request.params.id);
+    const limit = parseInt((request.query as any).limit || '100');
+    
+    const result = await query(
+      'SELECT * FROM metrics WHERE server_id = $1 ORDER BY timestamp DESC LIMIT $2',
+      [serverId, limit]
+    );
+    
+    return reply.send(result.rows);
+  } catch (error) {
+    console.error('Error fetching server metrics:', error);
+    return reply.status(500).send({ error: 'Failed to fetch metrics' });
+  }
+}
+
+export async function listAlerts(request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> {
+  try {
+    const limit = parseInt((request.query as any).limit || '50');
+    const acknowledged = (request.query as any).acknowledged;
+    
+    let sql = 'SELECT * FROM alerts ORDER BY created_at DESC LIMIT $1';
+    let params: any[] = [limit];
+    
+    if (acknowledged !== undefined) {
+      sql = 'SELECT * FROM alerts WHERE acknowledged = $1 ORDER BY created_at DESC LIMIT $2';
+      params = [acknowledged === 'true', limit];
+    }
+    
+    const result = await query(sql, params);
+    return reply.send(result.rows);
+  } catch (error) {
+    console.error('Error listing alerts:', error);
+    return reply.status(500).send({ error: 'Failed to list alerts' });
+  }
+}
+
+export async function acknowledgeAlert(request: FastifyRequest<{ Params: { id: string } }, reply: FastifyReply): Promise<FastifyReply> {
+  try {
+    const alertId = parseInt(request.params.id);
+    
+    const result = await query(
+      'UPDATE alerts SET acknowledged = TRUE WHERE id = $1 RETURNING *',
+      [alertId]
+    );
+    
+    if (result.rows.length === 0) {
+      return reply.status(404).send({ error: 'Alert not found' });
+    }
+    
+    return reply.send(result.rows[0]);
+  } catch (error) {
+    console.error('Error acknowledging alert:', error);
+    return reply.status(500).send({ error: 'Failed to acknowledge alert' });
+  }
+}
+
+export async function getConfig(request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> {
+  try {
+    const safeConfig = {
+      monitors: config.monitors,
+      alerts: {
+        discord: {
+          enabled: config.alerts.discord.enabled,
+          severity_levels: config.alerts.discord.severity_levels
+        },
+        thresholds: config.alerts.thresholds
+      },
+      anomaly_detection: config.anomaly_detection
+    };
+    return reply.send(safeConfig);
+  } catch (error) {
+    console.error('Error getting config:', error);
+    return reply.status(500).send({ error: 'Failed to get config' });
+  }
+}

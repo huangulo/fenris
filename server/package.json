@@ -1,0 +1,29 @@
+{
+  "name": "fenris-server",
+  "version": "0.1.0",
+  "description": "Fenris Infrastructure Monitoring Backend",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "tsup --watch",
+    "build": "tsup",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "fastify": "^5.0.0",
+    "@fastify/cors": "^9.0.0",
+    "@fastify/env": "^4.0.0",
+    "pg": "^8.11.0",
+    "js-yaml": "^4.1.0",
+    "pino": "^9.0.0",
+    "systeminformation": "^5.22.0",
+    "node-fetch": "^3.3.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.5.0",
+    "tsup": "^8.3.0",
+    "@types/pg": "^8.11.0"
+  }
+}

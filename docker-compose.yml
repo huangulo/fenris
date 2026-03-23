@@ -1,0 +1,50 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: fenris-postgres
+    environment:
+      POSTGRES_USER: fenris
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fenris}
+      POSTGRES_DB: fenris
+    volumes:
+      - fenris-postgres-data:/var/lib/postgresql/data
+    networks:
+      - fenris
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U fenris']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: fenris-server
+    environment:
+      - DATABASE_URL=postgresql://fenris:${POSTGRES_PASSWORD:-fenris}@postgres:5432/fenris
+      - PORT=3200
+      - NODE_ENV=production
+    ports:
+      - '3200:3200'
+    volumes:
+      - ./fenris.yaml:/app/fenris.yaml:ro
+      - fenris-logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - fenris
+    healthcheck:
+      test: ['CMD', 'wget', '--spider', '--quiet', '--tries=1', '--timeout=5', 'http://localhost:3200/health']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  fenris-postgres-data:
+  fenris-logs:
+
+networks:
+  fenris:
+    driver: bridge

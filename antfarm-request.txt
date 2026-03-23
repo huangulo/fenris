@@ -1,0 +1,51 @@
+# FENRIS MVP v0.1 - Infrastructure Monitoring System
+
+## Project Overview
+Build Fenris - a self-hosted predictive monitoring system for homelabs and small ops teams.
+
+## Core Requirements
+
+### 1. Backend Server
+- Node.js + TypeScript
+- Fastify framework
+- PostgreSQL database
+- Metrics collection: system (CPU, RAM, disk, network) + Docker containers
+- Anomaly detection: Z-score algorithm (threshold > 3.0)
+- Alert routing: Discord webhook integration
+
+### 2. File Structure
+/root/workspace/fenris/
+  - server/ (Node.js backend)
+  - web/ (React frontend)  
+  - agent/ (lightweight collector)
+  - docker-compose.yml
+  - fenris.yaml.example
+
+### 3. Database Schema
+- servers table: id, name, ip_address, api_key, last_heartbeat
+- metrics table: id, server_id, metric_type, value (JSONB), timestamp
+- alerts table: id, server_id, severity, message, acknowledged, created_at
+
+### 4. API Endpoints
+- POST /api/v1/metrics - Receive metrics
+- GET /api/v1/servers - List servers
+- GET /api/v1/alerts - List alerts
+- POST /api/v1/alerts/:id/acknowledge - Acknowledge alert
+
+### 5. Acceptance Criteria
+1. docker-compose up starts all services successfully
+2. Docker metrics collected every 15s
+3. System metrics collected every 30s
+4. Anomaly detection (Z-score > 3) triggers alerts
+5. Discord webhook sends formatted alerts
+6. Dashboard displays real-time metrics and alerts
+7. PostgreSQL stores metrics and alerts
+8. YAML configuration file controls behavior
+9. README with install/usage instructions
+10. Detects memory leak 80%+ before OOM
+
+## Success Metrics
+- Alert latency < 60s from anomaly to Discord
+- Dashboard loads in < 2s
+- < 5% false positive rate
+- Supports minimum 10 concurrent servers
