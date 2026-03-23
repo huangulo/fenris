@@ -45,6 +45,11 @@ CREATE INDEX IF NOT EXISTS idx_alerts_severity ON alerts(severity);
 CREATE INDEX IF NOT EXISTS idx_alerts_acknowledged ON alerts(acknowledged);
 CREATE INDEX IF NOT EXISTS idx_alerts_timestamp ON alerts(created_at DESC);
 
+-- Default local server (id=1, matches hardcoded server_id in collector)
+INSERT INTO servers (id, name, ip_address, api_key)
+VALUES (1, 'local', '127.0.0.1', 'local-default-key')
+ON CONFLICT DO NOTHING;
+
 -- Trigger for automatic timestamp updates
 CREATE OR REPLACE FUNCTION update_timestamp()
 RETURNS TRIGGER AS $$

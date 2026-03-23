@@ -7,9 +7,10 @@ RUN npm install
 
 COPY . .
 
-# Compile TypeScript
-RUN npm install -g typescript
-RUN npx tsc
+# Build with tsup (bundles to dist/index.js)
+RUN npm run build
+# Copy SQL asset alongside the bundle so readFileSync can find it
+RUN cp src/db/schema.sql dist/schema.sql
 
 # Create logs directory
 RUN mkdir -p /app/logs

@@ -6,7 +6,10 @@
       "Bash(wc -l /home/lechauve/ally_workspace/fenris/server/src/**/*.ts)",
       "Bash(git init:*)",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(docker --version)",
+      "Bash(docker compose:*)",
+      "Bash(docker exec:*)"
     ]
   }
 }
