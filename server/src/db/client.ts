@@ -1,5 +1,10 @@
 import pg from 'pg';
+import { readFileSync } from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import { Config } from '../types.js';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 let pool: pg.Pool | null = null;
 
@@ -49,9 +54,8 @@ export async function closeDatabase(): Promise<void> {
 export async function initializeTables(): Promise<void> {
   const client = await getClient();
   try {
-    const schema = await import('./schema.js', { assert: { type: 'json' } });
-    const sql = schema.default;
-    
+    const sql = readFileSync(join(__dirname, 'schema.sql'), 'utf-8');
+
     // Execute schema
     await client.query(sql);
     console.log('Database tables initialized');
