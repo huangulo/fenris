@@ -54,20 +54,41 @@ export class SystemCollector {
 
   async collectDisk(paths: string[]): Promise<SystemMetrics['disk']> {
     const fsSize = await si.fsSize();
-    
+    console.log('fsSize:', JSON.stringify(fsSize.map(f => ({ fs: f.fs, type: f.type, mount: f.mount, use: f.use, size: f.size }))));
+
+    const toGB = (b: number) => parseFloat((b / 1e9).toFixed(1));
+
     const diskStats: SystemMetrics['disk'] = [];
     for (const path of paths) {
       const disk = fsSize.find(d => d.mount === path);
       if (disk) {
         diskStats.push({
           path,
-          used_percent: Math.round(disk.use),
-          used_gb: Math.round(disk.used / 1024 / 1024 / 1024),
-          total_gb: Math.round(disk.size / 1024 / 1024 / 1024)
+          used_percent: parseFloat(disk.use.toFixed(1)),
+          total_gb: toGB(disk.size),
+          used_gb: toGB(disk.used),
+          available_gb: toGB(disk.available)
         });
       }
     }
-    
+
+    // Fallback: if no configured path matched, report the largest real partition
+    if (diskStats.length === 0) {
+      const SKIP = new Set(['tmpfs', 'devtmpfs', 'squashfs', 'sysfs', 'proc']);
+      const real = fsSize
+        .filter(d => !SKIP.has(d.type) && d.size > 0)
+        .sort((a, b) => b.size - a.size)[0];
+      if (real) {
+        diskStats.push({
+          path: real.mount,
+          used_percent: parseFloat(real.use.toFixed(1)),
+          total_gb: toGB(real.size),
+          used_gb: toGB(real.used),
+          available_gb: toGB(real.available)
+        });
+      }
+    }
+
     return diskStats;
   }
 
