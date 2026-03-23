@@ -1,4 +1,5 @@
 import * as si from 'systeminformation';
+import { loadavg } from 'os';
 import { Metric } from '../types.js';
 
 export interface SystemMetrics {
@@ -29,11 +30,11 @@ export class SystemCollector {
 
   async collectCPU(): Promise<SystemMetrics['cpu']> {
     const load = await si.currentLoad();
-    const cpuLoad = await si.currentLoad();
-    
+    const [avg1, avg5, avg15] = loadavg();
+
     return {
-      usage_percent: Math.round(cpuLoad.currentLoad * 100),
-      load_avg: [load.avgLoad, load.avgLoad1, load.avgLoad5]
+      usage_percent: Math.round(load.currentLoad),
+      load_avg: [avg1, avg5, avg15]
     };
   }
 
