@@ -98,7 +98,7 @@ export class SystemCollector {
     const networkInterfaces: SystemMetrics['network'] = [];
 
     for (const iface of networkStats) {
-      if (iface.operstate === 'up' && !iface.internal) {
+      if (iface.operstate === 'up' && iface.iface !== 'lo') {
         const last = this.lastNetworkStats.get(iface.iface);
 
         let rx_bytes = 0;

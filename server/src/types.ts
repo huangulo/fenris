@@ -1,12 +1,25 @@
+export interface ContainerStats {
+  name: string;
+  image: string;
+  state: 'running' | 'stopped' | 'restarting' | 'paused' | 'exited' | 'dead';
+  cpu_percent: number;
+  memory_mb: number;
+  memory_percent: number;
+  net_rx_bytes: number;
+  net_tx_bytes: number;
+  uptime_seconds: number;
+}
+
 export interface Metric {
   id: number;
   server_id: number;
-  metric_type: 'cpu' | 'memory' | 'disk' | 'network';
+  metric_type: 'cpu' | 'memory' | 'disk' | 'network' | 'docker';
   value: {
     cpu?: { usage_percent: number; load_avg: [number, number, number] };
-    memory?: { used_percent: number; used_mb: number; total_mb: number };
-    disk?: { path: string; used_percent: number; used_gb: number; total_gb: number };
+    memory?: { used_percent: number; total_gib: number; available_gib: number; used_gib: number };
+    disk?: { path: string; used_percent: number; total_gb: number; used_gb: number; available_gb: number };
     network?: { rx_bytes: number; tx_bytes: number; interface: string };
+    docker?: ContainerStats[];
   };
   timestamp: Date;
 }
@@ -16,7 +29,7 @@ export interface Alert {
   server_id: number;
   severity: 'info' | 'warning' | 'critical';
   message: string;
-  metric_type?: 'cpu' | 'memory' | 'disk' | 'network';
+  metric_type?: 'cpu' | 'memory' | 'disk' | 'network' | 'docker';
   threshold_value?: Record<string, number>;
   actual_value?: Record<string, number>;
   acknowledged: boolean;

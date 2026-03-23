@@ -7,11 +7,13 @@ import { load } from 'js-yaml';
 import { initDatabase, initializeTables, closeDatabase, query } from './db/client.js';
 import { initServices, ingestMetrics, healthCheck, receiveMetrics, listServers, getServerMetrics, listAlerts, acknowledgeAlert, getConfig } from './api/routes.js';
 import { SystemCollector } from './collectors/system.js';
+import { DockerCollector } from './collectors/docker.js';
 import { Config } from './types.js';
 
 const server = Fastify({ logger: true });
 
 let collector: SystemCollector;
+let dockerCollector: DockerCollector;
 let config: Config;
 let metricInterval: NodeJS.Timeout | null = null;
 let retentionInterval: NodeJS.Timeout | null = null;
@@ -103,14 +105,19 @@ async function startMetricsCollection(): Promise<void> {
   }
   
   collector = new SystemCollector();
+  dockerCollector = new DockerCollector();
+  await dockerCollector.init();
+
   const intervalMs = parseInterval(config.monitors.system.scrape_interval);
   const diskPaths = config.monitors.disk.paths.map(d => d.path);
-  
+
   console.log('Starting metrics collection every', intervalMs, 'ms');
-  
+
   metricInterval = setInterval(async () => {
     try {
       const metrics = await collector.collectAll(diskPaths);
+      const dockerMetric = await dockerCollector.collectAll();
+      if (dockerMetric) metrics.push(dockerMetric);
       await ingestMetrics(metrics);
     } catch (error) {
       console.error('Error collecting metrics:', error);
