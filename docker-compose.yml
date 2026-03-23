@@ -41,6 +41,20 @@ services:
       timeout: 10s
       retries: 3
 
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+      args:
+        VITE_API_KEY: ${VITE_API_KEY:-local-default-key}
+    container_name: fenris-web
+    ports:
+      - '8080:80'
+    depends_on:
+      - server
+    networks:
+      - fenris
+
 volumes:
   fenris-postgres-data:
   fenris-logs:
