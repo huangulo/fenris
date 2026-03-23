@@ -61,6 +61,8 @@ export async function ingestMetrics(metrics: Metric[]): Promise<{ anomaliesDetec
     }
   }
 
+  await query('UPDATE servers SET last_heartbeat = NOW() WHERE id = $1', [metrics[0].server_id]);
+
   for (const [metricType, anomaly] of anomalyResults.entries()) {
     const alert: Alert = {
       id: 0,
