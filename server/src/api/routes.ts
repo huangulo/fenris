@@ -2,13 +2,13 @@ import { FastifyRequest, FastifyReply } from 'fastify';
 import { query } from '../db/client.js';
 import { SystemCollector } from '../collectors/system.js';
 import { AnomalyDetector } from '../engine/anomaly.js';
-import { DiscordAlert } from '../alerts/discord.js';
+import { AlertDispatcher } from '../alerts/dispatcher.js';
 import { Metric, Alert, ContainerStats, Config } from '../types.js';
 
 // Global instances
 let collector: SystemCollector;
 let detector: AnomalyDetector;
-let discordAlert: DiscordAlert;
+let dispatcher: AlertDispatcher;
 let config: Config;
 
 // Fenris containers excluded from anomaly detection (self-referential noise)
@@ -18,11 +18,7 @@ export function initServices(cfg: Config): void {
   config = cfg;
   collector = new SystemCollector();
   detector = new AnomalyDetector(cfg.anomaly_detection);
-  discordAlert = new DiscordAlert(
-    cfg.alerts.discord.webhook_url,
-    cfg.alerts.discord.enabled,
-    cfg.alerts.discord.severity_levels
-  );
+  dispatcher = new AlertDispatcher(cfg);
 }
 
 export async function healthCheck(request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> {
@@ -137,7 +133,7 @@ export async function ingestMetrics(metrics: Metric[]): Promise<{ anomaliesDetec
     );
 
     alert.id = alertResult.rows[0].id;
-    await discordAlert.send(alert);
+    await dispatcher.dispatchAlert(alert);
   }
 
   return { anomaliesDetected: anomalyResults.size };
@@ -283,9 +279,14 @@ export async function acknowledgeAlert(request: FastifyRequest<{ Params: { id: s
 export async function getConfig(request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> {
   try {
     const safeConfig = JSON.parse(JSON.stringify(config));
-    // Strip all credential fields before sending
+    // Strip server block (contains database_url) and all channel credentials
     delete safeConfig.server;
-    delete safeConfig.alerts.discord.webhook_url;
+    if (safeConfig.alerts?.discord)  delete safeConfig.alerts.discord.webhook_url;
+    if (safeConfig.alerts?.slack)    delete safeConfig.alerts.slack.webhook_url;
+    if (safeConfig.alerts?.email) {
+      delete safeConfig.alerts.email.password;
+      delete safeConfig.alerts.email.username;
+    }
     return reply.send(safeConfig);
   } catch (error) {
     console.error('Error getting config:', error);
