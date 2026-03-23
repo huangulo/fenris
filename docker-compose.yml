@@ -49,7 +49,7 @@ services:
         VITE_API_KEY: ${VITE_API_KEY:-local-default-key}
     container_name: fenris-web
     ports:
-      - '8080:80'
+      - '8081:80'
     depends_on:
       - server
     networks:
