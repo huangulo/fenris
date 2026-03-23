@@ -37,7 +37,7 @@ export async function ingestMetrics(metrics: Metric[]): Promise<{ anomaliesDetec
       [metric.server_id, metric.metric_type, JSON.stringify(metric.value), metric.timestamp]
     );
 
-    let numericValue: number;
+    let numericValue: number = 0;
     if (metric.metric_type === 'cpu') {
       numericValue = metric.value.cpu!.usage_percent;
     } else if (metric.metric_type === 'memory') {
@@ -46,6 +46,9 @@ export async function ingestMetrics(metrics: Metric[]): Promise<{ anomaliesDetec
       numericValue = metric.value.disk!.used_percent;
     } else if (metric.metric_type === 'network') {
       numericValue = metric.value.network!.rx_bytes;
+    } else if (metric.metric_type === 'docker') {
+      // Full per-container anomaly logic handled separately — skip generic path
+      continue;
     }
 
     detector.addMetric(metric.metric_type, numericValue);
@@ -67,7 +70,7 @@ export async function ingestMetrics(metrics: Metric[]): Promise<{ anomaliesDetec
     const alert: Alert = {
       id: 0,
       server_id: metrics[0].server_id,
-      severity: anomaly.severity,
+      severity: anomaly.severity as Alert['severity'],
       message: 'Anomaly detected in ' + metricType.toUpperCase() + ' metrics',
       metric_type: metricType as any,
       actual_value: { value: anomaly.value },
