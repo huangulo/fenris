@@ -93,11 +93,14 @@ async function startMetricsCollection(): Promise<void> {
 }
 
 function parseInterval(intervalStr: string): number {
-  const match = intervalStr.match(/^(\d+)\s*$/);
+  const match = intervalStr.match(/^(\d+)(s|m|h)$/);
   if (!match) {
-    return 30000; // Default 30s
+    throw new Error(`Unrecognized interval format: "${intervalStr}". Use e.g. "30s", "5m", "2h".`);
   }
-  return parseInt(match[1]) * 1000;
+  const n = parseInt(match[1], 10);
+  if (match[2] === 's') return n * 1000;
+  if (match[2] === 'm') return n * 60 * 1000;
+  return n * 60 * 60 * 1000; // h
 }
 
 async function start(): Promise<void> {
