@@ -9,14 +9,16 @@ export interface SystemMetrics {
   };
   memory: {
     used_percent: number;
-    used_mb: number;
-    total_mb: number;
+    total_gib: number;
+    available_gib: number;
+    used_gib: number;
   };
   disk: Array<{
     path: string;
     used_percent: number;
-    used_gb: number;
     total_gb: number;
+    used_gb: number;
+    available_gb: number;
   }>;
   network: Array<{
     rx_bytes: number;
@@ -41,10 +43,12 @@ export class SystemCollector {
   async collectMemory(): Promise<SystemMetrics['memory']> {
     const mem = await si.mem();
     const actualUsed = mem.total - mem.available;
+    const toGiB = (b: number) => parseFloat((b / 1024 / 1024 / 1024).toFixed(1));
     return {
       used_percent: Math.round((actualUsed / mem.total) * 100),
-      used_mb: Math.round(actualUsed / 1024 / 1024),
-      total_mb: Math.round(mem.total / 1024 / 1024)
+      total_gib: toGiB(mem.total),
+      available_gib: toGiB(mem.available),
+      used_gib: toGiB(actualUsed)
     };
   }
 
