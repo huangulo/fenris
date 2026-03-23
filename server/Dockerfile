@@ -1,19 +1,26 @@
 FROM node:22-alpine
 
+# Install pnpm
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
 WORKDIR /app
 
-COPY package*.json ./
-RUN npm install
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
 
 COPY . .
 
 # Build with tsup (bundles to dist/index.js)
-RUN npm run build
+RUN pnpm run build
 # Copy SQL asset alongside the bundle so readFileSync can find it
 RUN cp src/db/schema.sql dist/schema.sql
 
 # Create logs directory
 RUN mkdir -p /app/logs
+
+# Non-root user
+RUN adduser --disabled-password --no-create-home fenris
+USER fenris
 
 # Expose port
 EXPOSE 3200
