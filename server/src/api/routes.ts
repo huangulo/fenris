@@ -185,17 +185,10 @@ export async function acknowledgeAlert(request: FastifyRequest<{ Params: { id: s
 
 export async function getConfig(request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> {
   try {
-    const safeConfig = {
-      monitors: config.monitors,
-      alerts: {
-        discord: {
-          enabled: config.alerts.discord.enabled,
-          severity_levels: config.alerts.discord.severity_levels
-        },
-        thresholds: config.alerts.thresholds
-      },
-      anomaly_detection: config.anomaly_detection
-    };
+    const safeConfig = JSON.parse(JSON.stringify(config));
+    // Strip all credential fields before sending
+    delete safeConfig.server;
+    delete safeConfig.alerts.discord.webhook_url;
     return reply.send(safeConfig);
   } catch (error) {
     console.error('Error getting config:', error);
