@@ -39,6 +39,11 @@ CREATE TABLE IF NOT EXISTS alerts (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+-- Partial GIN index for efficient per-container history queries
+CREATE INDEX IF NOT EXISTS idx_metrics_docker_containers
+  ON metrics USING GIN ((value->'docker'))
+  WHERE metric_type = 'docker';
+
 -- Index for alert queries
 CREATE INDEX IF NOT EXISTS idx_alerts_server_id ON alerts(server_id);
 CREATE INDEX IF NOT EXISTS idx_alerts_severity ON alerts(severity);
