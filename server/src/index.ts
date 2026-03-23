@@ -4,7 +4,7 @@ import env from '@fastify/env';
 import { readFileSync } from 'fs';
 import { load } from 'js-yaml';
 import { initDatabase, initializeTables, closeDatabase, query } from './db/client.js';
-import { initServices, healthCheck, receiveMetrics, listServers, getServerMetrics, listAlerts, acknowledgeAlert, getConfig, getDockerContainers, getDockerContainerHistory } from './api/routes.js';
+import { initServices, healthCheck, receiveMetrics, listServers, getAllMetrics, getServerMetrics, listAlerts, acknowledgeAlert, getConfig, getDockerContainers, getDockerContainerHistory } from './api/routes.js';
 import { Config } from './types.js';
 
 const server = Fastify({ logger: true });
@@ -158,6 +158,7 @@ async function start(): Promise<void> {
     }, receiveMetrics);
     
     server.get('/api/v1/servers', listServers);
+    server.get('/api/v1/metrics', getAllMetrics);
     server.get('/api/v1/servers/:id/metrics', getServerMetrics);
     server.get('/api/v1/alerts', listAlerts);
     server.get('/api/v1/docker/containers', getDockerContainers);
