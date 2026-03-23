@@ -40,10 +40,10 @@ export class SystemCollector {
 
   async collectMemory(): Promise<SystemMetrics['memory']> {
     const mem = await si.mem();
-    
+    const actualUsed = mem.total - mem.available;
     return {
-      used_percent: Math.round((mem.used / mem.total) * 100),
-      used_mb: Math.round(mem.used / 1024 / 1024),
+      used_percent: Math.round((actualUsed / mem.total) * 100),
+      used_mb: Math.round(actualUsed / 1024 / 1024),
       total_mb: Math.round(mem.total / 1024 / 1024)
     };
   }
@@ -53,7 +53,7 @@ export class SystemCollector {
     
     const diskStats: SystemMetrics['disk'] = [];
     for (const path of paths) {
-      const disk = fsSize.find(d => d.fs === path);
+      const disk = fsSize.find(d => d.mount === path);
       if (disk) {
         diskStats.push({
           path,
