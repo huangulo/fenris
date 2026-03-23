@@ -19,8 +19,8 @@ interface MetricRow {
   metric_type: 'cpu' | 'memory' | 'disk' | 'network';
   value: {
     cpu?:     { usage_percent: number; load_avg: number[] };
-    memory?:  { used_percent: number; used_mb: number; total_mb: number };
-    disk?:    { used_percent: number; used_gb: number; total_gb: number };
+    memory?:  { used_percent: number; total_gib: number; available_gib: number; used_gib: number };
+    disk?:    { used_percent: number; total_gb: number; used_gb: number; available_gb: number };
     network?: { rx_bytes: number; tx_bytes: number; interface: string };
   };
   timestamp: string;
@@ -153,6 +153,9 @@ export default function App() {
   const [netRxH, setNetRxH] = useState<number[]>([]);
   const [netTxH, setNetTxH] = useState<number[]>([]);
 
+  const [memInfo,  setMemInfo]  = useState<{ used_gib: number; total_gib: number } | null>(null);
+  const [diskInfo, setDiskInfo] = useState<{ used_gb: number; total_gb: number } | null>(null);
+
   const [alerts,       setAlerts]       = useState<AlertRow[]>([]);
   const [serverOnline, setServerOnline] = useState<boolean | null>(null);
   const [lastRefresh,  setLastRefresh]  = useState<Date | null>(null);
@@ -178,11 +181,20 @@ export default function App() {
           .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
           .slice(-20);
 
-      setCpuH  (byType('cpu')    .map(r => r.value.cpu?.usage_percent  ?? 0));
-      setMemH  (byType('memory') .map(r => r.value.memory?.used_percent ?? 0));
-      setDiskH (byType('disk')   .map(r => r.value.disk?.used_percent   ?? 0));
+      const memRows  = byType('memory');
+      const diskRows = byType('disk');
+
+      setCpuH  (byType('cpu')   .map(r => r.value.cpu?.usage_percent  ?? 0));
+      setMemH  (memRows          .map(r => r.value.memory?.used_percent ?? 0));
+      setDiskH (diskRows         .map(r => r.value.disk?.used_percent   ?? 0));
       setNetRxH(byType('network').map(r => r.value.network?.rx_bytes    ?? 0));
       setNetTxH(byType('network').map(r => r.value.network?.tx_bytes    ?? 0));
+
+      const lastMem = memRows.at(-1)?.value.memory;
+      if (lastMem) setMemInfo({ used_gib: lastMem.used_gib, total_gib: lastMem.total_gib });
+
+      const lastDisk = diskRows.at(-1)?.value.disk;
+      if (lastDisk) setDiskInfo({ used_gb: lastDisk.used_gb, total_gb: lastDisk.total_gb });
       setLastRefresh(new Date());
     } catch (e) {
       console.error('metrics fetch error', e);
@@ -297,12 +309,14 @@ export default function App() {
               display={`${latestMem.toFixed(1)}%`}
               pct={latestMem}
               history={memH}
+              sub={memInfo ? `${memInfo.used_gib} / ${memInfo.total_gib} GiB` : undefined}
             />
             <MetricCard
               label="Disk"
               display={`${latestDisk.toFixed(1)}%`}
               pct={latestDisk}
               history={diskH}
+              sub={diskInfo ? `${diskInfo.used_gb} / ${diskInfo.total_gb} GB` : undefined}
             />
             <MetricCard
               label="Network rx"
