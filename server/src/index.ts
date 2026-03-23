@@ -2,20 +2,14 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import env from '@fastify/env';
 import { readFileSync } from 'fs';
-import { join } from 'path';
 import { load } from 'js-yaml';
 import { initDatabase, initializeTables, closeDatabase, query } from './db/client.js';
-import { initServices, ingestMetrics, healthCheck, receiveMetrics, listServers, getServerMetrics, listAlerts, acknowledgeAlert, getConfig, getDockerContainers, getDockerContainerHistory } from './api/routes.js';
-import { SystemCollector } from './collectors/system.js';
-import { DockerCollector } from './collectors/docker.js';
+import { initServices, healthCheck, receiveMetrics, listServers, getServerMetrics, listAlerts, acknowledgeAlert, getConfig, getDockerContainers, getDockerContainerHistory } from './api/routes.js';
 import { Config } from './types.js';
 
 const server = Fastify({ logger: true });
 
-let collector: SystemCollector;
-let dockerCollector: DockerCollector;
 let config: Config;
-let metricInterval: NodeJS.Timeout | null = null;
 let retentionInterval: NodeJS.Timeout | null = null;
 
 async function loadConfig(): Promise<Config> {
@@ -98,43 +92,6 @@ async function startRetentionJob(): Promise<void> {
   retentionInterval = setInterval(runCleanup, 60 * 60 * 1000); // hourly
 }
 
-async function startMetricsCollection(): Promise<void> {
-  if (!config.monitors.system.enabled) {
-    console.log('System monitoring disabled');
-    return;
-  }
-  
-  collector = new SystemCollector();
-  dockerCollector = new DockerCollector();
-  await dockerCollector.init();
-
-  const intervalMs = parseInterval(config.monitors.system.scrape_interval);
-  const diskPaths = config.monitors.disk.paths.map(d => d.path);
-
-  console.log('Starting metrics collection every', intervalMs, 'ms');
-
-  metricInterval = setInterval(async () => {
-    try {
-      const metrics = await collector.collectAll(diskPaths);
-      const dockerMetric = await dockerCollector.collectAll();
-      if (dockerMetric) metrics.push(dockerMetric);
-      await ingestMetrics(metrics);
-    } catch (error) {
-      console.error('Error collecting metrics:', error);
-    }
-  }, intervalMs);
-}
-
-function parseInterval(intervalStr: string): number {
-  const match = intervalStr.match(/^(\d+)(s|m|h)$/);
-  if (!match) {
-    throw new Error(`Unrecognized interval format: "${intervalStr}". Use e.g. "30s", "5m", "2h".`);
-  }
-  const n = parseInt(match[1], 10);
-  if (match[2] === 's') return n * 1000;
-  if (match[2] === 'm') return n * 60 * 1000;
-  return n * 60 * 60 * 1000; // h
-}
 
 async function start(): Promise<void> {
   try {
@@ -151,8 +108,14 @@ async function start(): Promise<void> {
     // Initialize services
     initServices(config);
     
-    // API key authentication — exempt only health + config
-    const EXEMPT: Set<string> = new Set(['GET /health', 'GET /api/v1/config']);
+    // API key authentication
+    // POST /api/v1/metrics is exempt — it handles its own auth + auto-registration
+    // GET /health and GET /api/v1/config are public
+    const EXEMPT: Set<string> = new Set([
+      'GET /health',
+      'GET /api/v1/config',
+      'POST /api/v1/metrics'
+    ]);
     server.addHook('onRequest', async (request, reply) => {
       const path = request.url.split('?')[0];
       if (EXEMPT.has(`${request.method} ${path}`)) return;
@@ -174,14 +137,20 @@ async function start(): Promise<void> {
     server.post('/api/v1/metrics', {
       schema: {
         body: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              server_id: { type: 'number' },
-              metric_type: { type: 'string' },
-              value: { type: 'object' },
-              timestamp: { type: 'string', format: 'date-time' }
+          type: 'object',
+          required: ['server_name', 'metrics'],
+          properties: {
+            server_name: { type: 'string', minLength: 1, maxLength: 255 },
+            metrics: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  metric_type: { type: 'string' },
+                  value:       { type: 'object' },
+                  timestamp:   { type: 'string' }
+                }
+              }
             }
           }
         }
@@ -201,14 +170,11 @@ async function start(): Promise<void> {
     for (const signal of signals) {
       process.on(signal as NodeJS.Signals, async () => {
         console.log('Received', signal, ', shutting down gracefully...');
-        
-        if (metricInterval) {
-          clearInterval(metricInterval);
-        }
+
         if (retentionInterval) {
           clearInterval(retentionInterval);
         }
-        
+
         await closeDatabase();
         await server.close();
         process.exit(0);
@@ -222,9 +188,7 @@ async function start(): Promise<void> {
     });
     
     console.log('Fenris server listening on port', config.server.port);
-    
-    // Start metrics collection
-    await startMetricsCollection();
+    console.log('Self-collection disabled — metrics are ingested via agents (POST /api/v1/metrics)');
 
     // Start data retention job
     await startRetentionJob();
