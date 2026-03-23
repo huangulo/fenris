@@ -1,0 +1,26 @@
+{
+  "name": "fenris-agent",
+  "version": "0.1.0",
+  "description": "Fenris remote metrics agent",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "tsup --watch",
+    "build": "tsup",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "dockerode": "^4.0.10",
+    "js-yaml": "^4.1.0",
+    "node-fetch": "^3.3.2",
+    "systeminformation": "^5.22.0"
+  },
+  "devDependencies": {
+    "@types/dockerode": "^4.0.1",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^22.0.0",
+    "tsup": "^8.3.0",
+    "typescript": "^5.5.0"
+  }
+}

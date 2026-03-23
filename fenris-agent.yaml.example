@@ -1,0 +1,38 @@
+# fenris-agent.yaml — Configuration for the Fenris remote metrics agent
+#
+# Copy to fenris-agent.yaml and fill in your values.
+# All fields can also be set via environment variables (see below).
+# Environment variables take precedence over file values when both are set.
+
+# URL of the central Fenris server API (required)
+# Env: FENRIS_SERVER_URL
+server_url: http://fenris.example.com:3200
+
+# API key for authenticating with the server (required)
+# Must be a unique secret string per agent — use a random UUID or similar.
+# Env: FENRIS_API_KEY
+api_key: CHANGE_ME_UNIQUE_PER_HOST
+
+# Human-readable label for this host (required)
+# Must be unique across all agents reporting to this server.
+# Env: FENRIS_SERVER_NAME
+server_name: my-host
+
+# How often to collect and send metrics (default: 30s)
+# Accepts: bare numbers (treated as seconds), or strings with s/m/h suffix
+# Env: FENRIS_COLLECT_INTERVAL
+collect_interval: 30s
+
+# Enable Docker container monitoring (default: true)
+# Requires access to /var/run/docker.sock — mount it read-only if running in a container.
+# Env: FENRIS_DOCKER_ENABLED
+docker_enabled: true
+
+# Filesystem mount paths to monitor for disk usage (default: [/])
+# The agent will report the first matching mount from this list.
+# Falls back to the largest real partition if none match.
+# Env: FENRIS_DISK_PATHS (comma-separated, e.g. "/,/data,/var/lib/docker")
+disk_paths:
+  - /
+  - /var/lib/docker
+  - /var/log
