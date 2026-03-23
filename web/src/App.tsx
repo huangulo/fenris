@@ -16,6 +16,7 @@ function apiFetch(path: string, opts: RequestInit = {}) {
 // ---------------------------------------------------------------------------
 interface MetricRow {
   id: number;
+  server_id: number;
   metric_type: 'cpu' | 'memory' | 'disk' | 'network';
   value: {
     cpu?:     { usage_percent: number; load_avg: number[] };
@@ -28,6 +29,8 @@ interface MetricRow {
 
 interface AlertRow {
   id: number;
+  server_id: number;
+  server_name?: string;
   severity: 'info' | 'warning' | 'critical';
   message: string;
   metric_type?: string;
@@ -36,6 +39,9 @@ interface AlertRow {
 }
 
 interface ServerRow {
+  id: number;
+  name: string;
+  ip_address: string;
   last_heartbeat: string | null;
 }
 
@@ -194,6 +200,21 @@ function StateBadge({ state }: { state: string }) {
 }
 
 // ---------------------------------------------------------------------------
+// Server status dot
+// ---------------------------------------------------------------------------
+function ServerDot({ lastHeartbeat }: { lastHeartbeat: string | null }) {
+  const secs = secondsAgo(lastHeartbeat);
+  const online = secs < 90;
+  return (
+    <span
+      className={`inline-block w-2 h-2 rounded-full ${
+        online ? 'bg-green-400 shadow-[0_0_4px_#4ade80]' : 'bg-red-500'
+      }`}
+    />
+  );
+}
+
+// ---------------------------------------------------------------------------
 // App
 // ---------------------------------------------------------------------------
 export default function App() {
@@ -207,12 +228,13 @@ export default function App() {
   const [memInfo,  setMemInfo]  = useState<{ used_gib: number; total_gib: number } | null>(null);
   const [diskInfo, setDiskInfo] = useState<{ used_gb: number; total_gb: number } | null>(null);
 
-  const [alerts,       setAlerts]       = useState<AlertRow[]>([]);
+  const [alerts,         setAlerts]         = useState<AlertRow[]>([]);
+  const [servers,        setServers]        = useState<ServerRow[]>([]);
+  const [selectedServer, setSelectedServer] = useState<number | null>(null); // null = all
   const [dockerSnapshot, setDockerSnapshot] = useState<DockerSnapshot>({ containers: [], timestamp: null });
-  const [serverOnline, setServerOnline] = useState<boolean | null>(null);
-  const [lastRefresh,  setLastRefresh]  = useState<Date | null>(null);
-  const [loading,      setLoading]      = useState(true);
-  const [clock,        setClock]        = useState(new Date());
+  const [lastRefresh,  setLastRefresh]      = useState<Date | null>(null);
+  const [loading,      setLoading]          = useState(true);
+  const [clock,        setClock]            = useState(new Date());
 
   // 1-second clock tick
   useEffect(() => {
@@ -221,9 +243,12 @@ export default function App() {
   }, []);
 
   // ---- fetchers ----
-  const fetchMetrics = useCallback(async () => {
+  const fetchMetrics = useCallback(async (serverId: number | null) => {
     try {
-      const res = await apiFetch('/api/v1/servers/1/metrics?limit=80');
+      const url = serverId != null
+        ? `/api/v1/servers/${serverId}/metrics?limit=80`
+        : '/api/v1/metrics?limit=80';
+      const res = await apiFetch(url);
       if (!res.ok) return;
       const rows: MetricRow[] = await res.json();
 
@@ -256,9 +281,12 @@ export default function App() {
     }
   }, []);
 
-  const fetchAlerts = useCallback(async () => {
+  const fetchAlerts = useCallback(async (serverId: number | null) => {
     try {
-      const res = await apiFetch('/api/v1/alerts?limit=30');
+      const url = serverId != null
+        ? `/api/v1/alerts?limit=30&server_id=${serverId}`
+        : '/api/v1/alerts?limit=30';
+      const res = await apiFetch(url);
       if (!res.ok) return;
       setAlerts(await res.json());
     } catch (e) {
@@ -266,20 +294,23 @@ export default function App() {
     }
   }, []);
 
-  const fetchServer = useCallback(async () => {
+  const fetchServers = useCallback(async () => {
     try {
       const res = await apiFetch('/api/v1/servers');
-      if (!res.ok) { setServerOnline(false); return; }
-      const servers: ServerRow[] = await res.json();
-      setServerOnline(servers.length > 0 && secondsAgo(servers[0].last_heartbeat) < 60);
+      if (!res.ok) return;
+      const rows: ServerRow[] = await res.json();
+      setServers(rows);
     } catch {
-      setServerOnline(false);
+      setServers([]);
     }
   }, []);
 
-  const fetchDocker = useCallback(async () => {
+  const fetchDocker = useCallback(async (serverId: number | null) => {
     try {
-      const res = await apiFetch('/api/v1/docker/containers');
+      const url = serverId != null
+        ? `/api/v1/docker/containers?server_id=${serverId}`
+        : '/api/v1/docker/containers';
+      const res = await apiFetch(url);
       if (!res.ok) return;
       setDockerSnapshot(await res.json());
     } catch (e) {
@@ -287,20 +318,19 @@ export default function App() {
     }
   }, []);
 
+  const refresh = useCallback((serverId: number | null) => {
+    fetchMetrics(serverId);
+    fetchAlerts(serverId);
+    fetchServers();
+    fetchDocker(serverId);
+  }, [fetchMetrics, fetchAlerts, fetchServers, fetchDocker]);
+
   // initial fetch + 30s poll
   useEffect(() => {
-    fetchMetrics();
-    fetchAlerts();
-    fetchServer();
-    fetchDocker();
-    const t = setInterval(() => {
-      fetchMetrics();
-      fetchAlerts();
-      fetchServer();
-      fetchDocker();
-    }, 30_000);
+    refresh(selectedServer);
+    const t = setInterval(() => refresh(selectedServer), 30_000);
     return () => clearInterval(t);
-  }, [fetchMetrics, fetchAlerts, fetchServer, fetchDocker]);
+  }, [refresh, selectedServer]);
 
   // ---- acknowledge ----
   async function acknowledge(id: number) {
@@ -331,6 +361,9 @@ export default function App() {
 
   const unhealthyCount = dockerSnapshot.containers.filter(c => c.state !== 'running').length;
 
+  const selectedServerRow = servers.find(s => s.id === selectedServer) ?? null;
+  const overallOnline = servers.length > 0 && servers.some(s => secondsAgo(s.last_heartbeat) < 90);
+
   // ---- loading screen ----
   if (loading) {
     return (
@@ -348,18 +381,32 @@ export default function App() {
         <div className="flex items-center gap-4">
           <h1 className="text-base font-bold tracking-[0.2em] text-white">FENRIS</h1>
           <span className="text-gray-700">|</span>
+
+          {/* Overall status dot */}
           <div className="flex items-center gap-2 text-xs">
             <span
               className={`w-2 h-2 rounded-full ${
-                serverOnline === true  ? 'bg-green-400 shadow-[0_0_4px_#4ade80]' :
-                serverOnline === false ? 'bg-red-500' :
-                'bg-gray-600'
+                overallOnline ? 'bg-green-400 shadow-[0_0_4px_#4ade80]' : 'bg-red-500'
               }`}
             />
-            <span className={serverOnline === true ? 'text-green-400' : 'text-gray-500'}>
-              {serverOnline === true ? 'online' : serverOnline === false ? 'offline' : '…'}
+            <span className={overallOnline ? 'text-green-400' : 'text-gray-500'}>
+              {overallOnline ? 'online' : servers.length === 0 ? 'no agents' : 'offline'}
             </span>
           </div>
+
+          {/* Server selector */}
+          {servers.length > 0 && (
+            <select
+              value={selectedServer ?? ''}
+              onChange={e => setSelectedServer(e.target.value === '' ? null : parseInt(e.target.value))}
+              className="text-xs font-mono bg-gray-800 border border-gray-700 text-gray-300 rounded px-2 py-1 focus:outline-none focus:border-gray-500"
+            >
+              <option value="">All Servers</option>
+              {servers.map(s => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </select>
+          )}
         </div>
         <div className="flex items-center gap-4 text-xs text-gray-500">
           {lastRefresh && <span>updated {fmtClock(lastRefresh)}</span>}
@@ -369,9 +416,61 @@ export default function App() {
 
       <main className="px-6 py-6 max-w-5xl mx-auto space-y-8">
 
+        {/* ---- Server Status Panel (all-servers view) ---- */}
+        {selectedServer === null && servers.length > 0 && (
+          <section>
+            <h2 className="text-xs uppercase tracking-widest text-gray-600 mb-3">Servers</h2>
+            <div className="bg-gray-800 border border-gray-700 rounded-lg overflow-hidden">
+              <table className="w-full text-xs font-mono">
+                <thead>
+                  <tr className="border-b border-gray-700 text-gray-500 uppercase tracking-widest text-left">
+                    <th className="px-4 py-2">Status</th>
+                    <th className="px-4 py-2">Name</th>
+                    <th className="px-4 py-2">IP</th>
+                    <th className="px-4 py-2">Last Seen</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {servers.map(s => {
+                    const secs = secondsAgo(s.last_heartbeat);
+                    const online = secs < 90;
+                    const lastSeen = s.last_heartbeat
+                      ? new Date(s.last_heartbeat).toLocaleString()
+                      : 'never';
+                    return (
+                      <tr
+                        key={s.id}
+                        className="border-b border-gray-700/50 last:border-0 hover:bg-gray-750 transition-colors cursor-pointer"
+                        onClick={() => setSelectedServer(s.id)}
+                      >
+                        <td className="px-4 py-2">
+                          <ServerDot lastHeartbeat={s.last_heartbeat} />
+                        </td>
+                        <td className="px-4 py-2 text-white font-bold">{s.name}</td>
+                        <td className="px-4 py-2 text-gray-400">{s.ip_address}</td>
+                        <td className={`px-4 py-2 ${online ? 'text-gray-400' : 'text-red-400'}`}>
+                          {lastSeen}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
+
         {/* ---- System Metrics ---- */}
         <section>
-          <h2 className="text-xs uppercase tracking-widest text-gray-600 mb-3">System Metrics</h2>
+          <h2 className="text-xs uppercase tracking-widest text-gray-600 mb-3">
+            System Metrics
+            {selectedServerRow && (
+              <span className="ml-2 normal-case text-gray-500">
+                — {selectedServerRow.name}
+                <ServerDot lastHeartbeat={selectedServerRow.last_heartbeat} />
+              </span>
+            )}
+          </h2>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             <MetricCard
               label="CPU"
@@ -483,6 +582,9 @@ export default function App() {
                   <div className="flex-1 min-w-0">
                     <div className="text-sm text-gray-200 truncate">{alert.message}</div>
                     <div className="text-xs text-gray-500 mt-0.5 space-x-2">
+                      {alert.server_name && (
+                        <span className="text-gray-400 font-bold">{alert.server_name}</span>
+                      )}
                       {alert.metric_type && (
                         <span className="uppercase">{alert.metric_type}</span>
                       )}
