@@ -26,7 +26,7 @@ export interface SystemMetrics {
 }
 
 export class SystemCollector {
-  private lastNetworkStats: Map<string, { rx: number; tx: number }> = new Map();
+  private lastNetworkStats: Map<string, { rx: number; tx: number; ts: number }> = new Map();
 
   async collectCPU(): Promise<SystemMetrics['cpu']> {
     const load = await si.currentLoad();
@@ -69,26 +69,26 @@ export class SystemCollector {
 
   async collectNetwork(): Promise<SystemMetrics['network']> {
     const networkStats = await si.networkStats();
+    const now = Date.now();
     const networkInterfaces: SystemMetrics['network'] = [];
-    
+
     for (const iface of networkStats) {
       if (iface.operstate === 'up' && !iface.internal) {
-        const lastStats = this.lastNetworkStats.get(iface.iface);
-        
-        const currentStats = {
-          rx_bytes: iface.rx_bytes,
-          tx_bytes: iface.tx_bytes,
-          interface: iface.iface
-        };
-        
-        networkInterfaces.push(currentStats);
-        this.lastNetworkStats.set(iface.iface, {
-          rx: iface.rx_bytes,
-          tx: iface.tx_bytes
-        });
+        const last = this.lastNetworkStats.get(iface.iface);
+
+        let rx_bytes = 0;
+        let tx_bytes = 0;
+        if (last) {
+          const elapsedSec = (now - last.ts) / 1000;
+          rx_bytes = Math.round((iface.rx_bytes - last.rx) / elapsedSec);
+          tx_bytes = Math.round((iface.tx_bytes - last.tx) / elapsedSec);
+        }
+
+        networkInterfaces.push({ rx_bytes, tx_bytes, interface: iface.iface });
+        this.lastNetworkStats.set(iface.iface, { rx: iface.rx_bytes, tx: iface.tx_bytes, ts: now });
       }
     }
-    
+
     return networkInterfaces;
   }
 
