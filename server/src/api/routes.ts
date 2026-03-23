@@ -26,68 +26,72 @@ export async function healthCheck(request: FastifyRequest, reply: FastifyReply):
   return reply.send({ status: 'healthy', timestamp: new Date().toISOString() });
 }
 
+export async function ingestMetrics(metrics: Metric[]): Promise<{ anomaliesDetected: number }> {
+  console.log('Received metrics:', metrics.length, 'records');
+
+  const anomalyResults = new Map<string, { isAnomaly: boolean; severity: string; value: number }>();
+
+  for (const metric of metrics) {
+    await query(
+      'INSERT INTO metrics (server_id, metric_type, value, timestamp) VALUES ($1, $2, $3::jsonb, $4)',
+      [metric.server_id, metric.metric_type, JSON.stringify(metric.value), metric.timestamp]
+    );
+
+    let numericValue: number;
+    if (metric.metric_type === 'cpu') {
+      numericValue = metric.value.cpu!.usage_percent;
+    } else if (metric.metric_type === 'memory') {
+      numericValue = metric.value.memory!.used_percent;
+    } else if (metric.metric_type === 'disk') {
+      numericValue = metric.value.disk!.used_percent;
+    } else if (metric.metric_type === 'network') {
+      numericValue = metric.value.network!.rx_bytes;
+    }
+
+    detector.addMetric(metric.metric_type, numericValue);
+    const result = detector.detectAnomaly(metric.metric_type, numericValue);
+
+    if (result.isAnomaly) {
+      const severity = determineSeverity(metric.metric_type, numericValue, config.alerts.thresholds);
+      anomalyResults.set(metric.metric_type, {
+        isAnomaly: true,
+        severity,
+        value: numericValue
+      });
+    }
+  }
+
+  for (const [metricType, anomaly] of anomalyResults.entries()) {
+    const alert: Alert = {
+      id: 0,
+      server_id: metrics[0].server_id,
+      severity: anomaly.severity,
+      message: 'Anomaly detected in ' + metricType.toUpperCase() + ' metrics',
+      metric_type: metricType as any,
+      actual_value: { value: anomaly.value },
+      threshold_value: { zscore: detector.getHistory(metricType).slice(-1)[0] },
+      acknowledged: false,
+      created_at: new Date()
+    };
+
+    const alertResult = await query(
+      'INSERT INTO alerts (server_id, severity, message, metric_type, actual_value, threshold_value, acknowledged, created_at) VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8) RETURNING id',
+      [alert.server_id, alert.severity, alert.message, alert.metric_type,
+       JSON.stringify(alert.actual_value), JSON.stringify(alert.threshold_value),
+       alert.acknowledged, alert.created_at]
+    );
+
+    alert.id = alertResult.rows[0].id;
+    await discordAlert.send(alert);
+  }
+
+  return { anomaliesDetected: anomalyResults.size };
+}
+
 export async function receiveMetrics(request: FastifyRequest<{ Body: Metric[] }>, reply: FastifyReply): Promise<FastifyReply> {
   try {
-    const metrics = request.body;
-    console.log('Received metrics:', metrics.length, 'records');
-    
-    const anomalyResults = new Map<string, { isAnomaly: boolean; severity: string; value: number }>();
-    
-    for (const metric of metrics) {
-      await query(
-        'INSERT INTO metrics (server_id, metric_type, value, timestamp) VALUES ($1, $2, $3::jsonb, $4)',
-        [metric.server_id, metric.metric_type, JSON.stringify(metric.value), metric.timestamp]
-      );
-      
-      let numericValue: number;
-      if (metric.metric_type === 'cpu') {
-        numericValue = metric.value.cpu!.usage_percent;
-      } else if (metric.metric_type === 'memory') {
-        numericValue = metric.value.memory!.used_percent;
-      } else if (metric.metric_type === 'disk') {
-        numericValue = metric.value.disk!.used_percent;
-      } else if (metric.metric_type === 'network') {
-        numericValue = metric.value.network!.rx_bytes;
-      }
-      
-      detector.addMetric(metric.metric_type, numericValue);
-      const result = detector.detectAnomaly(metric.metric_type, numericValue);
-      
-      if (result.isAnomaly) {
-        const severity = determineSeverity(metric.metric_type, numericValue, config.alerts.thresholds);
-        anomalyResults.set(metric.metric_type, {
-          isAnomaly: true,
-          severity,
-          value: numericValue
-        });
-      }
-    }
-    
-    for (const [metricType, anomaly] of anomalyResults.entries()) {
-      const alert: Alert = {
-        id: 0,
-        server_id: metrics[0].server_id,
-        severity: anomaly.severity,
-        message: 'Anomaly detected in ' + metricType.toUpperCase() + ' metrics',
-        metric_type: metricType as any,
-        actual_value: { value: anomaly.value },
-        threshold_value: { zscore: detector.getHistory(metricType).slice(-1)[0] },
-        acknowledged: false,
-        created_at: new Date()
-      };
-      
-      const alertResult = await query(
-        'INSERT INTO alerts (server_id, severity, message, metric_type, actual_value, threshold_value, acknowledged, created_at) VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8) RETURNING id',
-        [alert.server_id, alert.severity, alert.message, alert.metric_type, 
-         JSON.stringify(alert.actual_value), JSON.stringify(alert.threshold_value),
-         alert.acknowledged, alert.created_at]
-      );
-      
-      alert.id = alertResult.rows[0].id;
-      await discordAlert.send(alert);
-    }
-    
-    return reply.status(201).send({ success: true, anomaliesDetected: anomalyResults.size });
+    const result = await ingestMetrics(request.body);
+    return reply.status(201).send({ success: true, ...result });
   } catch (error) {
     console.error('Error processing metrics:', error);
     return reply.status(500).send({ error: 'Failed to process metrics' });

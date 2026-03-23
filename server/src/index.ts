@@ -5,7 +5,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { load } from 'js-yaml';
 import { initDatabase, initializeTables, closeDatabase } from './db/client.js';
-import { initServices, healthCheck, receiveMetrics, listServers, getServerMetrics, listAlerts, acknowledgeAlert, getConfig } from './api/routes.js';
+import { initServices, ingestMetrics, healthCheck, receiveMetrics, listServers, getServerMetrics, listAlerts, acknowledgeAlert, getConfig } from './api/routes.js';
 import { SystemCollector } from './collectors/system.js';
 import { Config } from './types.js';
 
@@ -85,14 +85,7 @@ async function startMetricsCollection(): Promise<void> {
   metricInterval = setInterval(async () => {
     try {
       const metrics = await collector.collectAll(diskPaths);
-      
-      for (const metric of metrics) {
-        await fetch('http://localhost:' + config.server.port + '/api/v1/metrics', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(metrics)
-        });
-      }
+      await ingestMetrics(metrics);
     } catch (error) {
       console.error('Error collecting metrics:', error);
     }
