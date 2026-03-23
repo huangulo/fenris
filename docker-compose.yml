@@ -28,8 +28,11 @@ services:
       - NODE_ENV=production
     ports:
       - '3200:3200'
+    group_add:
+      - "${DOCKER_GID:-988}"
     volumes:
       - fenris-logs:/app/logs
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     depends_on:
       postgres:
         condition: service_healthy
