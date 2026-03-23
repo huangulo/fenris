@@ -1,14 +1,14 @@
 # FENRIS Configuration
+# Copy to fenris.yaml and fill in your values.
+# js-yaml does NOT expand ${ENV_VAR} — write values directly or rely on
+# the env-var fallback path (recommended for Docker deployments).
 
 server:
   port: 3200
-  # Database URL - connects via internal Docker network
-  # PostgreSQL is NOT exposed externally (security best practice)
-  database_url: postgresql://fenris:${POSTGRES_PASSWORD:-fenris}@postgres:5432/fenris
+  database_url: postgresql://fenris:CHANGE_ME_BEFORE_DEPLOY@postgres:5432/fenris
 
 # Metrics Collection
 monitors:
-  # System metrics (CPU, RAM, disk, network)
   system:
     enabled: true
     scrape_interval: 30s
@@ -17,25 +17,59 @@ monitors:
       - memory
       - disk
       - network
-  
-  # Docker container monitoring (v0.2 feature, not MVP v0.1)
-  docker:
-    enabled: false  # Disabled for MVP v0.1
-    scrape_interval: 15s  # How often to collect container stats
-    include_stopped: false  # Include stopped containers
 
-# Alert Configuration
+  disk:
+    paths:
+      - path: /
+        name: root
+        warning_threshold: 85
+        critical_threshold: 95
+      - path: /var/lib/docker
+        name: docker-data
+        warning_threshold: 80
+        critical_threshold: 90
+      - path: /var/log
+        name: logs
+        warning_threshold: 85
+        critical_threshold: 95
+
+# Alert Channels
+# Each channel has its own enabled flag and severity_levels filter.
+# All enabled channels fire in parallel; one failure does not block others.
 alerts:
-  # Discord webhook integration
+
+  # Discord incoming webhook
   discord:
     enabled: true
-    webhook_url: ${DISCORD_WEBHOOK_URL}  # Set via environment variable
+    webhook_url: "https://discord.com/api/webhooks/YOUR_ID/YOUR_TOKEN"
     severity_levels:
-      - info
       - warning
       - critical
-  
-  # Thresholds for alerting
+
+  # Slack incoming webhook
+  slack:
+    enabled: false
+    webhook_url: "https://hooks.slack.com/services/T.../B.../..."
+    severity_levels:
+      - warning
+      - critical
+
+  # Email via SMTP (e.g. Gmail, SendGrid, Postfix)
+  email:
+    enabled: false
+    smtp_host: "smtp.gmail.com"
+    smtp_port: 587
+    smtp_secure: false        # true = TLS on connect (port 465); false = STARTTLS (587)
+    username: ""              # SMTP login username (often same as 'from' address)
+    password: ""              # SMTP password or app-password
+    from: "fenris@yourdomain.com"
+    to:
+      - "admin@yourdomain.com"
+    severity_levels:
+      - warning
+      - critical
+
+  # Anomaly and threshold values that trigger alerts
   thresholds:
     cpu:
       warning: 75
@@ -47,37 +81,20 @@ alerts:
       warning: 85
       critical: 95
     network:
-      # Network alerts based on anomaly detection only
-      anomaly_threshold: 3.0  # Z-score threshold
-
-# Disk Monitoring Configuration
-# IMPORTANT: You MUST define which paths to monitor
-disk_paths:
-  - path: /
-    name: root
-    warning_threshold: 85
-    critical_threshold: 95
-  - path: /var/lib/docker
-    name: docker-data
-    warning_threshold: 80
-    critical_threshold: 90
-  - path: /var/log
-    name: logs
-    warning_threshold: 85
-    critical_threshold: 95
+      anomaly_threshold: 3.0
 
 # Anomaly Detection
 anomaly_detection:
   enabled: true
   algorithm: zscore
   zscore_threshold: 3.0
-  window_size: 100  # Number of data points for baseline
-  min_samples: 30  # Minimum samples before triggering alerts
+  window_size: 100
+  min_samples: 30
 
 # Data Retention
 retention:
-  metrics_days: 30  # Keep metrics for 30 days
-  alerts_days: 90   # Keep alerts for 90 days
+  metrics_days: 30
+  alerts_days: 90
 
 # Logging
 logging:

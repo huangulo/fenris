@@ -79,6 +79,22 @@ export interface Config {
       webhook_url: string;
       severity_levels: string[];
     };
+    slack?: {
+      enabled: boolean;
+      webhook_url: string;
+      severity_levels: string[];
+    };
+    email?: {
+      enabled: boolean;
+      smtp_host: string;
+      smtp_port: number;
+      smtp_secure: boolean;
+      username: string;
+      password: string;
+      from: string;
+      to: string[];
+      severity_levels: string[];
+    };
     thresholds: {
       cpu: { warning: number; critical: number };
       memory: { warning: number; critical: number };
