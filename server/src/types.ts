@@ -80,4 +80,8 @@ export interface Config {
     window_size: number;
     min_samples: number;
   };
+  retention?: {
+    metrics_days: number;
+    alerts_days: number;
+  };
 }

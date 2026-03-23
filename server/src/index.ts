@@ -14,6 +14,7 @@ const server = Fastify({ logger: true });
 let collector: SystemCollector;
 let config: Config;
 let metricInterval: NodeJS.Timeout | null = null;
+let retentionInterval: NodeJS.Timeout | null = null;
 
 async function loadConfig(): Promise<Config> {
   const configPath = process.env.FENRIS_CONFIG || '/app/fenris.yaml';
@@ -68,6 +69,31 @@ async function loadConfig(): Promise<Config> {
     };
     return config;
   }
+}
+
+async function startRetentionJob(): Promise<void> {
+  const metricsDays = config.retention?.metrics_days ?? 30;
+  const alertsDays = config.retention?.alerts_days ?? 90;
+
+  const runCleanup = async () => {
+    try {
+      const mResult = await query(
+        'DELETE FROM metrics WHERE timestamp < NOW() - ($1 || \' days\')::INTERVAL',
+        [metricsDays]
+      );
+      console.log('Retention: deleted', mResult.rowCount, 'metric rows older than', metricsDays, 'days');
+
+      const aResult = await query(
+        'DELETE FROM alerts WHERE created_at < NOW() - ($1 || \' days\')::INTERVAL',
+        [alertsDays]
+      );
+      console.log('Retention: deleted', aResult.rowCount, 'alert rows older than', alertsDays, 'days');
+    } catch (error) {
+      console.error('Retention job error:', error);
+    }
+  };
+
+  retentionInterval = setInterval(runCleanup, 60 * 60 * 1000); // hourly
 }
 
 async function startMetricsCollection(): Promise<void> {
@@ -170,6 +196,9 @@ async function start(): Promise<void> {
         if (metricInterval) {
           clearInterval(metricInterval);
         }
+        if (retentionInterval) {
+          clearInterval(retentionInterval);
+        }
         
         await closeDatabase();
         await server.close();
@@ -187,6 +216,9 @@ async function start(): Promise<void> {
     
     // Start metrics collection
     await startMetricsCollection();
+
+    // Start data retention job
+    await startRetentionJob();
     
   } catch (error) {
     console.error('Failed to start server:', error);
