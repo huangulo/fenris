@@ -4,7 +4,7 @@ import env from '@fastify/env';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { load } from 'js-yaml';
-import { initDatabase, initializeTables, closeDatabase } from './db/client.js';
+import { initDatabase, initializeTables, closeDatabase, query } from './db/client.js';
 import { initServices, ingestMetrics, healthCheck, receiveMetrics, listServers, getServerMetrics, listAlerts, acknowledgeAlert, getConfig } from './api/routes.js';
 import { SystemCollector } from './collectors/system.js';
 import { Config } from './types.js';
@@ -115,6 +115,23 @@ async function start(): Promise<void> {
     // Initialize services
     initServices(config);
     
+    // API key authentication — exempt only health + config
+    const EXEMPT: Set<string> = new Set(['GET /health', 'GET /api/v1/config']);
+    server.addHook('onRequest', async (request, reply) => {
+      const path = request.url.split('?')[0];
+      if (EXEMPT.has(`${request.method} ${path}`)) return;
+
+      const apiKey = request.headers['x-api-key'];
+      if (!apiKey) {
+        return reply.status(401).send({ error: 'unauthorized' });
+      }
+
+      const result = await query('SELECT id FROM servers WHERE api_key = $1', [apiKey]);
+      if (result.rows.length === 0) {
+        return reply.status(401).send({ error: 'unauthorized' });
+      }
+    });
+
     // Register routes
     server.get('/health', healthCheck);
     
