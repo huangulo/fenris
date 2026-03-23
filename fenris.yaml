@@ -1,0 +1,87 @@
+# FENRIS Configuration
+
+server:
+  port: 3200
+  # Database URL - connects via internal Docker network
+  # PostgreSQL is NOT exposed externally (security best practice)
+  database_url: postgresql://fenris:${POSTGRES_PASSWORD:-fenris}@postgres:5432/fenris
+
+# Metrics Collection
+monitors:
+  # System metrics (CPU, RAM, disk, network)
+  system:
+    enabled: true
+    scrape_interval: 30s
+    metrics:
+      - cpu
+      - memory
+      - disk
+      - network
+  
+  # Docker container monitoring (v0.2 feature, not MVP v0.1)
+  docker:
+    enabled: false  # Disabled for MVP v0.1
+    scrape_interval: 15s  # How often to collect container stats
+    include_stopped: false  # Include stopped containers
+
+# Alert Configuration
+alerts:
+  # Discord webhook integration
+  discord:
+    enabled: true
+    webhook_url: ${DISCORD_WEBHOOK_URL}  # Set via environment variable
+    severity_levels:
+      - info
+      - warning
+      - critical
+  
+  # Thresholds for alerting
+  thresholds:
+    cpu:
+      warning: 75
+      critical: 95
+    memory:
+      warning: 80
+      critical: 90
+    disk:
+      warning: 85
+      critical: 95
+    network:
+      # Network alerts based on anomaly detection only
+      anomaly_threshold: 3.0  # Z-score threshold
+
+# Disk Monitoring Configuration
+# IMPORTANT: You MUST define which paths to monitor
+disk_paths:
+  - path: /
+    name: root
+    warning_threshold: 85
+    critical_threshold: 95
+  - path: /var/lib/docker
+    name: docker-data
+    warning_threshold: 80
+    critical_threshold: 90
+  - path: /var/log
+    name: logs
+    warning_threshold: 85
+    critical_threshold: 95
+
+# Anomaly Detection
+anomaly_detection:
+  enabled: true
+  algorithm: zscore
+  zscore_threshold: 3.0
+  window_size: 100  # Number of data points for baseline
+  min_samples: 30  # Minimum samples before triggering alerts
+
+# Data Retention
+retention:
+  metrics_days: 30  # Keep metrics for 30 days
+  alerts_days: 90   # Keep alerts for 90 days
+
+# Logging
+logging:
+  level: info
+  file: /app/logs/fenris.log
+  max_size: 100MB
+  max_files: 5

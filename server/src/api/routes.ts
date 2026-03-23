@@ -125,7 +125,7 @@ export async function listServers(request: FastifyRequest, reply: FastifyReply):
   }
 }
 
-export async function getServerMetrics(request: FastifyRequest<{ Params: { id: string } }, reply: FastifyReply): Promise<FastifyReply> {
+export async function getServerMetrics(request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply): Promise<FastifyReply> {
   try {
     const serverId = parseInt(request.params.id);
     const limit = parseInt((request.query as any).limit || '100');
@@ -163,7 +163,7 @@ export async function listAlerts(request: FastifyRequest, reply: FastifyReply): 
   }
 }
 
-export async function acknowledgeAlert(request: FastifyRequest<{ Params: { id: string } }, reply: FastifyReply): Promise<FastifyReply> {
+export async function acknowledgeAlert(request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply): Promise<FastifyReply> {
   try {
     const alertId = parseInt(request.params.id);
     
