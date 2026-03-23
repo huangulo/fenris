@@ -5,7 +5,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { load } from 'js-yaml';
 import { initDatabase, initializeTables, closeDatabase, query } from './db/client.js';
-import { initServices, ingestMetrics, healthCheck, receiveMetrics, listServers, getServerMetrics, listAlerts, acknowledgeAlert, getConfig } from './api/routes.js';
+import { initServices, ingestMetrics, healthCheck, receiveMetrics, listServers, getServerMetrics, listAlerts, acknowledgeAlert, getConfig, getDockerContainers, getDockerContainerHistory } from './api/routes.js';
 import { SystemCollector } from './collectors/system.js';
 import { DockerCollector } from './collectors/docker.js';
 import { Config } from './types.js';
@@ -191,6 +191,8 @@ async function start(): Promise<void> {
     server.get('/api/v1/servers', listServers);
     server.get('/api/v1/servers/:id/metrics', getServerMetrics);
     server.get('/api/v1/alerts', listAlerts);
+    server.get('/api/v1/docker/containers', getDockerContainers);
+    server.get('/api/v1/docker/containers/:name/metrics', getDockerContainerHistory);
     server.post('/api/v1/alerts/:id/acknowledge', acknowledgeAlert);
     server.get('/api/v1/config', getConfig);
     
