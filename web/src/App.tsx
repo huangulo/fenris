@@ -39,6 +39,23 @@ interface ServerRow {
   last_heartbeat: string | null;
 }
 
+interface ContainerStats {
+  name: string;
+  image: string;
+  state: string;
+  cpu_percent: number;
+  memory_mb: number;
+  memory_percent: number;
+  net_rx_bytes: number;
+  net_tx_bytes: number;
+  uptime_seconds: number;
+}
+
+interface DockerSnapshot {
+  containers: ContainerStats[];
+  timestamp: string | null;
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -67,6 +84,20 @@ function fmtClock(d: Date): string {
 function secondsAgo(ts: string | null): number {
   if (!ts) return Infinity;
   return (Date.now() - new Date(ts).getTime()) / 1000;
+}
+
+function fmtUptime(seconds: number): string {
+  if (seconds <= 0) return '—';
+  if (seconds < 60)   return `${seconds}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  return m > 0 ? `${h}h ${m}m` : `${h}h`;
+}
+
+function truncateImage(image: string): string {
+  const short = image.split('/').pop() ?? image;
+  return short.length > 28 ? short.slice(0, 25) + '…' : short;
 }
 
 // ---------------------------------------------------------------------------
@@ -105,7 +136,7 @@ function Sparkline({ values, stroke }: { values: number[]; stroke: string }) {
 interface CardProps {
   label: string;
   display: string;
-  pct: number | null; // null = no % threshold (network)
+  pct: number | null;
   history: number[];
   sub?: string;
 }
@@ -143,6 +174,26 @@ function SeverityBadge({ sev }: { sev: string }) {
 }
 
 // ---------------------------------------------------------------------------
+// Container state badge
+// ---------------------------------------------------------------------------
+const STATE_CLS: Record<string, string> = {
+  running:    'bg-green-950 text-green-300 border border-green-700',
+  restarting: 'bg-yellow-950 text-yellow-300 border border-yellow-700',
+  paused:     'bg-blue-950 text-blue-300 border border-blue-700',
+  exited:     'bg-red-950 text-red-300 border border-red-700',
+  dead:       'bg-gray-800 text-gray-400 border border-gray-600',
+  stopped:    'bg-red-950 text-red-300 border border-red-700',
+};
+
+function StateBadge({ state }: { state: string }) {
+  return (
+    <span className={`text-xs font-mono px-2 py-0.5 rounded whitespace-nowrap ${STATE_CLS[state] ?? 'bg-gray-700 text-gray-300'}`}>
+      {state}
+    </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // App
 // ---------------------------------------------------------------------------
 export default function App() {
@@ -157,6 +208,7 @@ export default function App() {
   const [diskInfo, setDiskInfo] = useState<{ used_gb: number; total_gb: number } | null>(null);
 
   const [alerts,       setAlerts]       = useState<AlertRow[]>([]);
+  const [dockerSnapshot, setDockerSnapshot] = useState<DockerSnapshot>({ containers: [], timestamp: null });
   const [serverOnline, setServerOnline] = useState<boolean | null>(null);
   const [lastRefresh,  setLastRefresh]  = useState<Date | null>(null);
   const [loading,      setLoading]      = useState(true);
@@ -195,6 +247,7 @@ export default function App() {
 
       const lastDisk = diskRows.at(-1)?.value.disk;
       if (lastDisk) setDiskInfo({ used_gb: lastDisk.used_gb, total_gb: lastDisk.total_gb });
+
       setLastRefresh(new Date());
     } catch (e) {
       console.error('metrics fetch error', e);
@@ -224,18 +277,30 @@ export default function App() {
     }
   }, []);
 
+  const fetchDocker = useCallback(async () => {
+    try {
+      const res = await apiFetch('/api/v1/docker/containers');
+      if (!res.ok) return;
+      setDockerSnapshot(await res.json());
+    } catch (e) {
+      console.error('docker fetch error', e);
+    }
+  }, []);
+
   // initial fetch + 30s poll
   useEffect(() => {
     fetchMetrics();
     fetchAlerts();
     fetchServer();
+    fetchDocker();
     const t = setInterval(() => {
       fetchMetrics();
       fetchAlerts();
       fetchServer();
+      fetchDocker();
     }, 30_000);
     return () => clearInterval(t);
-  }, [fetchMetrics, fetchAlerts, fetchServer]);
+  }, [fetchMetrics, fetchAlerts, fetchServer, fetchDocker]);
 
   // ---- acknowledge ----
   async function acknowledge(id: number) {
@@ -255,6 +320,16 @@ export default function App() {
   const latestTx   = netTxH.at(-1) ?? 0;
 
   const activeAlerts = alerts.filter(a => !a.acknowledged).length;
+
+  // Stopped/restarting containers sorted to top, then alphabetically
+  const sortedContainers = [...dockerSnapshot.containers].sort((a, b) => {
+    const aDown = a.state !== 'running' ? 0 : 1;
+    const bDown = b.state !== 'running' ? 0 : 1;
+    if (aDown !== bDown) return aDown - bDown;
+    return a.name.localeCompare(b.name);
+  });
+
+  const unhealthyCount = dockerSnapshot.containers.filter(c => c.state !== 'running').length;
 
   // ---- loading screen ----
   if (loading) {
@@ -294,7 +369,7 @@ export default function App() {
 
       <main className="px-6 py-6 max-w-5xl mx-auto space-y-8">
 
-        {/* ---- Metrics ---- */}
+        {/* ---- System Metrics ---- */}
         <section>
           <h2 className="text-xs uppercase tracking-widest text-gray-600 mb-3">System Metrics</h2>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -326,6 +401,61 @@ export default function App() {
               sub={`tx ${fmtBytes(latestTx)}`}
             />
           </div>
+        </section>
+
+        {/* ---- Containers ---- */}
+        <section>
+          <h2 className="text-xs uppercase tracking-widest text-gray-600 mb-3">
+            Containers
+            {dockerSnapshot.containers.length > 0 && (
+              <span className="ml-2 normal-case text-gray-600">
+                — {dockerSnapshot.containers.length} total
+                {unhealthyCount > 0 && (
+                  <span className="ml-1 text-red-400">· {unhealthyCount} unhealthy</span>
+                )}
+              </span>
+            )}
+          </h2>
+          {sortedContainers.length === 0 ? (
+            <p className="text-xs text-gray-600">No container data available.</p>
+          ) : (
+            <div className="bg-gray-800 border border-gray-700 rounded-lg overflow-hidden">
+              <table className="w-full text-xs font-mono">
+                <thead>
+                  <tr className="border-b border-gray-700 text-gray-500 uppercase tracking-widest text-left">
+                    <th className="px-4 py-2">Name</th>
+                    <th className="px-4 py-2">Image</th>
+                    <th className="px-4 py-2">State</th>
+                    <th className="px-4 py-2 text-right">CPU%</th>
+                    <th className="px-4 py-2 text-right">Mem MB</th>
+                    <th className="px-4 py-2 text-right">Mem%</th>
+                    <th className="px-4 py-2 text-right">Uptime</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sortedContainers.map(c => (
+                    <tr key={c.name} className="border-b border-gray-700/50 last:border-0 hover:bg-gray-750 transition-colors">
+                      <td className="px-4 py-2 text-white font-bold">{c.name}</td>
+                      <td className="px-4 py-2 text-gray-400 max-w-[12rem] truncate">{truncateImage(c.image)}</td>
+                      <td className="px-4 py-2"><StateBadge state={c.state} /></td>
+                      <td className={`px-4 py-2 text-right tabular-nums ${valueColor(c.cpu_percent)}`}>
+                        {c.cpu_percent.toFixed(1)}
+                      </td>
+                      <td className="px-4 py-2 text-right tabular-nums text-gray-300">
+                        {c.memory_mb.toFixed(0)}
+                      </td>
+                      <td className={`px-4 py-2 text-right tabular-nums ${valueColor(c.memory_percent)}`}>
+                        {c.memory_percent.toFixed(1)}
+                      </td>
+                      <td className="px-4 py-2 text-right text-gray-500">
+                        {fmtUptime(c.uptime_seconds)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </section>
 
         {/* ---- Alerts ---- */}
