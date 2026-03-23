@@ -1,12 +1,10 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { query } from '../db/client.js';
-import { SystemCollector } from '../collectors/system.js';
 import { AnomalyDetector } from '../engine/anomaly.js';
 import { AlertDispatcher } from '../alerts/dispatcher.js';
 import { Metric, Alert, ContainerStats, Config } from '../types.js';
 
 // Global instances
-let collector: SystemCollector;
 let detector: AnomalyDetector;
 let dispatcher: AlertDispatcher;
 let config: Config;
@@ -16,7 +14,6 @@ const DOCKER_EXCLUDED = new Set(['fenris-server', 'fenris-web', 'fenris-postgres
 
 export function initServices(cfg: Config): void {
   config = cfg;
-  collector = new SystemCollector();
   detector = new AnomalyDetector(cfg.anomaly_detection);
   dispatcher = new AlertDispatcher(cfg);
 }
@@ -28,13 +25,17 @@ export async function healthCheck(request: FastifyRequest, reply: FastifyReply):
 export async function ingestMetrics(metrics: Metric[]): Promise<{ anomaliesDetected: number }> {
   console.log('Received metrics:', metrics.length, 'records');
 
+  const serverId = metrics[0]?.server_id ?? 1;
+  // Scope detector keys per server so histories don't bleed across hosts
+  const key = (k: string) => `${serverId}:${k}`;
+
   type AnomalyEntry = { isAnomaly: boolean; severity: string; value: number; message?: string };
   const anomalyResults = new Map<string, AnomalyEntry>();
 
   // Pre-fetch last docker snapshot for state-transition detection (before any inserts)
   const prevDockerResult = await query(
     "SELECT value->'docker' AS containers FROM metrics WHERE server_id = $1 AND metric_type = 'docker' ORDER BY timestamp DESC LIMIT 1",
-    [metrics[0]?.server_id ?? 1]
+    [serverId]
   );
   const prevContainers: ContainerStats[] = prevDockerResult.rows[0]?.containers ?? [];
   const prevStateMap = new Map(prevContainers.map(c => [c.name, c.state]));
@@ -61,7 +62,7 @@ export async function ingestMetrics(metrics: Metric[]): Promise<{ anomaliesDetec
 
         // Z-score anomaly on CPU and memory (skip Fenris containers)
         if (!DOCKER_EXCLUDED.has(c.name)) {
-          const cpuKey = `docker:${c.name}:cpu`;
+          const cpuKey = key(`docker:${c.name}:cpu`);
           detector.addMetric(cpuKey, c.cpu_percent);
           const cpuResult = detector.detectAnomaly(cpuKey, c.cpu_percent);
           if (cpuResult.isAnomaly) {
@@ -71,7 +72,7 @@ export async function ingestMetrics(metrics: Metric[]): Promise<{ anomaliesDetec
             });
           }
 
-          const memKey = `docker:${c.name}:memory`;
+          const memKey = key(`docker:${c.name}:memory`);
           detector.addMetric(memKey, c.memory_percent);
           const memResult = detector.detectAnomaly(memKey, c.memory_percent);
           if (memResult.isAnomaly) {
@@ -96,8 +97,9 @@ export async function ingestMetrics(metrics: Metric[]): Promise<{ anomaliesDetec
       numericValue = metric.value.network!.rx_bytes;
     }
 
-    detector.addMetric(metric.metric_type, numericValue);
-    const result = detector.detectAnomaly(metric.metric_type, numericValue);
+    const metricKey = key(metric.metric_type);
+    detector.addMetric(metricKey, numericValue);
+    const result = detector.detectAnomaly(metricKey, numericValue);
 
     if (result.isAnomaly) {
       const severity = determineSeverity(metric.metric_type, numericValue, config.alerts.thresholds);
@@ -109,7 +111,7 @@ export async function ingestMetrics(metrics: Metric[]): Promise<{ anomaliesDetec
     }
   }
 
-  await query('UPDATE servers SET last_heartbeat = NOW() WHERE id = $1', [metrics[0].server_id]);
+  await query('UPDATE servers SET last_heartbeat = NOW() WHERE id = $1', [serverId]);
 
   for (const [metricType, anomaly] of anomalyResults.entries()) {
     const message = anomaly.message ?? `Anomaly detected in ${metricType.toUpperCase()} metrics`;
@@ -139,10 +141,60 @@ export async function ingestMetrics(metrics: Metric[]): Promise<{ anomaliesDetec
   return { anomaliesDetected: anomalyResults.size };
 }
 
-export async function receiveMetrics(request: FastifyRequest<{ Body: Metric[] }>, reply: FastifyReply): Promise<FastifyReply> {
+interface AgentPayload {
+  server_name: string;
+  metrics: Omit<Metric, 'id' | 'server_id'>[];
+}
+
+export async function receiveMetrics(
+  request: FastifyRequest<{ Body: AgentPayload }>,
+  reply: FastifyReply
+): Promise<FastifyReply> {
   try {
-    const result = await ingestMetrics(request.body);
-    return reply.status(201).send({ success: true, ...result });
+    const apiKey = request.headers['x-api-key'] as string | undefined;
+    if (!apiKey) {
+      return reply.status(401).send({ error: 'unauthorized' });
+    }
+
+    const { server_name, metrics: rawMetrics } = request.body;
+    if (!server_name) {
+      return reply.status(400).send({ error: 'server_name is required in payload' });
+    }
+    if (!Array.isArray(rawMetrics) || rawMetrics.length === 0) {
+      return reply.status(400).send({ error: 'metrics array is required and must not be empty' });
+    }
+
+    // Resolve IP from request (X-Forwarded-For → socket)
+    const forwarded = request.headers['x-forwarded-for'];
+    const ip = (Array.isArray(forwarded) ? forwarded[0] : forwarded?.split(',')[0])?.trim()
+             ?? request.socket.remoteAddress
+             ?? '0.0.0.0';
+
+    // Upsert: auto-register on first contact, update heartbeat on reconnect
+    const upsertResult = await query(
+      `INSERT INTO servers (name, ip_address, api_key, last_heartbeat)
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (api_key)
+       DO UPDATE SET name = EXCLUDED.name, ip_address = EXCLUDED.ip_address, last_heartbeat = NOW()
+       RETURNING id, (xmax = 0) AS is_new`,
+      [server_name, ip, apiKey]
+    );
+
+    const { id: serverId, is_new: isNew } = upsertResult.rows[0];
+    if (isNew) {
+      console.log(`[server] auto-registered new agent: "${server_name}" (${ip}) → server_id=${serverId}`);
+    }
+
+    // Stamp server_id on all incoming metrics
+    const metrics: Metric[] = rawMetrics.map(m => ({
+      ...m,
+      id: 0,
+      server_id: serverId,
+      timestamp: m.timestamp ? new Date(m.timestamp as unknown as string) : new Date()
+    }));
+
+    const result = await ingestMetrics(metrics);
+    return reply.status(201).send({ success: true, server_id: serverId, ...result });
   } catch (error) {
     console.error('Error processing metrics:', error);
     return reply.status(500).send({ error: 'Failed to process metrics' });
