@@ -108,17 +108,16 @@ async function start(): Promise<void> {
     // Initialize services
     initServices(config);
     
-    // API key authentication
-    // POST /api/v1/metrics is exempt — it handles its own auth + auto-registration
-    // GET /health and GET /api/v1/config are public
-    const EXEMPT: Set<string> = new Set([
-      'GET /health',
-      'GET /api/v1/config',
-      'POST /api/v1/metrics'
-    ]);
+    // API key authentication — only /api/ routes are gated
+    // POST /api/v1/metrics handles its own auth + auto-registration inline
+    // GET /api/v1/config is intentionally public (returns safe config subset)
+    const NO_AUTH = new Set(['POST /api/v1/metrics', 'GET /api/v1/config']);
     server.addHook('onRequest', async (request, reply) => {
       const path = request.url.split('?')[0];
-      if (EXEMPT.has(`${request.method} ${path}`)) return;
+      // Non-API paths (e.g. /health) never require a key
+      if (!path.startsWith('/api/')) return;
+      // A few API paths are explicitly public
+      if (NO_AUTH.has(`${request.method} ${path}`)) return;
 
       const apiKey = request.headers['x-api-key'];
       if (!apiKey) {
