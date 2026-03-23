@@ -245,11 +245,46 @@ export async function getServerMetrics(request: FastifyRequest<{ Params: { id: s
   }
 }
 
+export async function getAllMetrics(request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> {
+  try {
+    const limit = parseInt((request.query as any).limit || '100');
+    const serverIdParam = (request.query as any).server_id;
+
+    let result;
+    if (serverIdParam) {
+      result = await query(
+        'SELECT * FROM metrics WHERE server_id = $1 ORDER BY timestamp DESC LIMIT $2',
+        [parseInt(serverIdParam), limit]
+      );
+    } else {
+      result = await query(
+        'SELECT * FROM metrics ORDER BY timestamp DESC LIMIT $1',
+        [limit]
+      );
+    }
+
+    return reply.send(result.rows);
+  } catch (error) {
+    console.error('Error fetching metrics:', error);
+    return reply.status(500).send({ error: 'Failed to fetch metrics' });
+  }
+}
+
 export async function getDockerContainers(request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> {
   try {
-    const result = await query(
-      "SELECT value->'docker' AS containers, timestamp FROM metrics WHERE server_id = 1 AND metric_type = 'docker' ORDER BY timestamp DESC LIMIT 1"
-    );
+    const serverIdParam = (request.query as any).server_id;
+    let result;
+    if (serverIdParam) {
+      const serverId = parseInt(serverIdParam);
+      result = await query(
+        "SELECT value->'docker' AS containers, timestamp FROM metrics WHERE server_id = $1 AND metric_type = 'docker' ORDER BY timestamp DESC LIMIT 1",
+        [serverId]
+      );
+    } else {
+      result = await query(
+        "SELECT value->'docker' AS containers, timestamp FROM metrics WHERE metric_type = 'docker' ORDER BY timestamp DESC LIMIT 1"
+      );
+    }
     if (result.rows.length === 0) {
       return reply.send({ containers: [], timestamp: null });
     }
@@ -267,18 +302,33 @@ export async function getDockerContainerHistory(
   try {
     const containerName = request.params.name;
     const limit = Math.min(parseInt((request.query as any).limit || '50'), 200);
+    const serverIdParam = (request.query as any).server_id;
 
-    const result = await query(
-      `SELECT m.timestamp, elem AS stats
-       FROM metrics m,
-            LATERAL jsonb_array_elements(m.value->'docker') AS elem
-       WHERE m.server_id = 1
-         AND m.metric_type = 'docker'
-         AND elem->>'name' = $1
-       ORDER BY m.timestamp DESC
-       LIMIT $2`,
-      [containerName, limit]
-    );
+    let result;
+    if (serverIdParam) {
+      result = await query(
+        `SELECT m.timestamp, elem AS stats
+         FROM metrics m,
+              LATERAL jsonb_array_elements(m.value->'docker') AS elem
+         WHERE m.server_id = $1
+           AND m.metric_type = 'docker'
+           AND elem->>'name' = $2
+         ORDER BY m.timestamp DESC
+         LIMIT $3`,
+        [parseInt(serverIdParam), containerName, limit]
+      );
+    } else {
+      result = await query(
+        `SELECT m.timestamp, elem AS stats
+         FROM metrics m,
+              LATERAL jsonb_array_elements(m.value->'docker') AS elem
+         WHERE m.metric_type = 'docker'
+           AND elem->>'name' = $1
+         ORDER BY m.timestamp DESC
+         LIMIT $2`,
+        [containerName, limit]
+      );
+    }
 
     return reply.send(result.rows);
   } catch (error) {
@@ -291,14 +341,23 @@ export async function listAlerts(request: FastifyRequest, reply: FastifyReply): 
   try {
     const limit = parseInt((request.query as any).limit || '50');
     const acknowledged = (request.query as any).acknowledged;
+    const serverIdParam = (request.query as any).server_id;
 
-    let sql = 'SELECT * FROM alerts ORDER BY created_at DESC LIMIT $1';
-    let params: any[] = [limit];
+    const conditions: string[] = [];
+    const params: any[] = [];
 
-    if (acknowledged !== undefined) {
-      sql = 'SELECT * FROM alerts WHERE acknowledged = $1 ORDER BY created_at DESC LIMIT $2';
-      params = [acknowledged === 'true', limit];
+    if (serverIdParam) {
+      params.push(parseInt(serverIdParam));
+      conditions.push(`server_id = $${params.length}`);
     }
+    if (acknowledged !== undefined) {
+      params.push(acknowledged === 'true');
+      conditions.push(`acknowledged = $${params.length}`);
+    }
+
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    params.push(limit);
+    const sql = `SELECT a.*, s.name AS server_name FROM alerts a LEFT JOIN servers s ON s.id = a.server_id ${where} ORDER BY a.created_at DESC LIMIT $${params.length}`;
 
     const result = await query(sql, params);
     return reply.send(result.rows);
