@@ -6,14 +6,9 @@ import React, { useState, useEffect, useCallback } from 'react';
 const API_KEY = import.meta.env.VITE_API_KEY ?? '';
 
 function apiFetch(path: string, opts: RequestInit = {}) {
-  return fetch(path, {
-    ...opts,
-    headers: {
-      'X-API-Key': API_KEY,
-      'Content-Type': 'application/json',
-      ...(opts.headers ?? {}),
-    },
-  });
+  const headers: Record<string, string> = { 'X-API-Key': API_KEY };
+  if (opts.body != null) headers['Content-Type'] = 'application/json';
+  return fetch(path, { ...opts, headers: { ...headers, ...(opts.headers ?? {}) } });
 }
 
 // ---------------------------------------------------------------------------
