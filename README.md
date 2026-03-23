@@ -140,33 +140,84 @@ alerts:
 ## Architecture
 
 ```
-Fenris Server (Central Brain)
-├── Pattern Engine (ML/Stats)
-├── Alert Manager (Routing)
-├── Knowledge Graph (Dependencies)
-└── Web Dashboard (UI)
+Fenris Server (Central Brain)         ← runs once, anywhere
+├── HTTP API + anomaly detection
+├── PostgreSQL storage
+└── Web Dashboard
      ↑
-     ├── Agent 1 (Pangolin .100) - v0.2
-     ├── Agent 2 (RackNerd .230) - v0.2
-     └── Agent N (Your Servers) - v0.2
+     ├── Fenris Agent (host-1)         ← runs on every monitored host
+     ├── Fenris Agent (host-2)
+     └── Fenris Agent (host-N)
 ```
+
+### Multi-Server Agent Architecture
+
+**Fenris Server** receives metrics, runs anomaly detection, fires alerts, and serves the dashboard. It does **not** collect its own metrics — deploy an agent on the server host too if you want to monitor it.
+
+**Fenris Agent** is a lightweight process that collects system and Docker metrics every 30 s and POSTs them to the central server. It buffers up to 100 snapshots in memory when the server is unreachable and flushes them automatically when the connection resumes.
+
+#### Deploying the agent on a remote host
+
+```bash
+# On the remote host — clone the repo (or copy just the agent/ directory)
+git clone https://github.com/hugolechauve/fenris.git fenris-agent
+cd fenris-agent/agent
+
+# Install dependencies and build
+pnpm install
+pnpm run build
+
+# Create config
+cp ../fenris-agent.yaml.example fenris-agent.yaml
+nano fenris-agent.yaml   # set server_url, api_key, server_name
+
+# Run
+node dist/index.js
+```
+
+Or run it as a Docker container:
+
+```bash
+cd fenris-agent/agent
+docker build -t fenris-agent .
+
+docker run -d \
+  --name fenris-agent \
+  --restart unless-stopped \
+  -v /var/run/docker.sock:/var/run/docker.sock:ro \
+  -e FENRIS_SERVER_URL=http://your-fenris-server:3200 \
+  -e FENRIS_API_KEY=your-unique-agent-key \
+  -e FENRIS_SERVER_NAME=my-remote-host \
+  fenris-agent
+```
+
+The agent auto-registers on first contact. No pre-configuration needed on the server — just start the agent with a unique `api_key` and it will appear in the dashboard.
+
+#### Agent configuration (`fenris-agent.yaml`)
+
+See `fenris-agent.yaml.example` for all options. Key fields:
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `server_url` | `http://localhost:3200` | Central Fenris API URL |
+| `api_key` | *(required)* | Unique secret per agent |
+| `server_name` | hostname | Human label shown in the dashboard |
+| `collect_interval` | `30s` | Collection frequency (`30s`, `1m`, `5m`) |
+| `docker_enabled` | `true` | Enable Docker container monitoring |
+| `disk_paths` | `[/]` | Filesystem mount points to monitor |
+
+All fields can also be set via environment variables (`FENRIS_SERVER_URL`, `FENRIS_API_KEY`, etc.).
 
 ## Roadmap
 
-### v0.1 (MVP - Current) - Single-Server
+### v0.2 (Multi-Server) — Current
 - ✅ Core monitoring engine
 - ✅ System metrics (CPU, RAM, disk, network)
+- ✅ Docker container monitoring
 - ✅ Z-score anomaly detection
-- ✅ Discord alert integration
-- ✅ Basic web dashboard
-- ⏸️ Docker container monitoring (v0.2)
-- ⏸️ Multi-server support (v0.2)
-
-### v0.2 (Multi-Server) - 1 week
-- Docker agent system
-- Multi-server UI
-- Secure agent communication
-- Agent auto-registration
+- ✅ Discord / Slack / Email alert channels
+- ✅ Remote agent with auto-registration
+- ✅ Per-server dashboard with server selector
 
 ### v1.0 (Full Release) - 4 weeks
 - Pattern learning
