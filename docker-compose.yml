@@ -4,7 +4,8 @@ services:
     container_name: fenris-postgres
     environment:
       POSTGRES_USER: fenris
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fenris}
+      # WARNING: set POSTGRES_PASSWORD in your environment or a .env file before deploying
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-CHANGE_ME_BEFORE_DEPLOY}
       POSTGRES_DB: fenris
     volumes:
       - fenris-postgres-data:/var/lib/postgresql/data
@@ -22,7 +23,7 @@ services:
       dockerfile: Dockerfile
     container_name: fenris-server
     environment:
-      - DATABASE_URL=postgresql://fenris:${POSTGRES_PASSWORD:-fenris}@postgres:5432/fenris
+      - DATABASE_URL=postgresql://fenris:${POSTGRES_PASSWORD:-CHANGE_ME_BEFORE_DEPLOY}@postgres:5432/fenris
       - PORT=3200
       - NODE_ENV=production
     ports:
