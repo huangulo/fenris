@@ -58,6 +58,35 @@ services:
     networks:
       - fenris
 
+  # ---------------------------------------------------------------------------
+  # agent (example — uncomment to run an agent on the same host as the server)
+  #
+  # For remote hosts: copy the agent/ directory, build the image, and run it
+  # with the environment variables below pointing at this server.
+  # See README.md → "Deploying the agent on a remote host" for details.
+  # ---------------------------------------------------------------------------
+  # agent:
+  #   build:
+  #     context: ./agent
+  #     dockerfile: Dockerfile
+  #   container_name: fenris-agent-local
+  #   environment:
+  #     - FENRIS_SERVER_URL=http://server:3200
+  #     - FENRIS_API_KEY=${AGENT_API_KEY:-local-agent-key}
+  #     - FENRIS_SERVER_NAME=${AGENT_SERVER_NAME:-docker-host}
+  #     - FENRIS_COLLECT_INTERVAL=30s
+  #     - FENRIS_DOCKER_ENABLED=true
+  #   group_add:
+  #     - "${DOCKER_GID:-988}"
+  #   volumes:
+  #     - /var/run/docker.sock:/var/run/docker.sock:ro
+  #   depends_on:
+  #     server:
+  #       condition: service_healthy
+  #   networks:
+  #     - fenris
+  #   restart: unless-stopped
+
 volumes:
   fenris-postgres-data:
   fenris-logs:
