@@ -12,6 +12,7 @@ let backoffMs = 5_000; // starts at 5s, backs off up to 5 min on persistent fail
 
 async function postPayload(serverUrl: string, apiKey: string, payload: AgentPayload): Promise<boolean> {
   try {
+    console.log(`[agent] POSTing to ${serverUrl}`);
     const res = await fetch(`${serverUrl}/api/v1/metrics`, {
       method: 'POST',
       headers: {
@@ -82,6 +83,7 @@ async function run(): Promise<void> {
     console.log('[agent] collecting metrics…');
     try {
       const payload = await collect(systemCollector, dockerCollector, config.server_name, config.disk_paths);
+      console.log(`[agent] collected ${payload.metrics.length} metrics, sending…`);
 
       // Try to flush any backlog first
       if (buffer.length > 0) {
