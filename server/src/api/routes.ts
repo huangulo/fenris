@@ -174,8 +174,8 @@ export async function receiveMetrics(
     const upsertResult = await query(
       `INSERT INTO servers (name, ip_address, api_key, last_heartbeat)
        VALUES ($1, $2, $3, NOW())
-       ON CONFLICT (api_key)
-       DO UPDATE SET name = EXCLUDED.name, ip_address = EXCLUDED.ip_address, last_heartbeat = NOW()
+       ON CONFLICT (api_key, name)
+       DO UPDATE SET ip_address = EXCLUDED.ip_address, last_heartbeat = NOW()
        RETURNING id, (xmax = 0) AS is_new`,
       [server_name, ip, apiKey]
     );
