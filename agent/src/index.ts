@@ -79,6 +79,7 @@ async function run(): Promise<void> {
   }
 
   const tick = async () => {
+    console.log('[agent] collecting metrics…');
     try {
       const payload = await collect(systemCollector, dockerCollector, config.server_name, config.disk_paths);
 
