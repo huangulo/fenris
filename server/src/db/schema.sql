@@ -4,12 +4,24 @@
 -- Servers table: Stores registered monitoring targets
 CREATE TABLE IF NOT EXISTS servers (
   id SERIAL PRIMARY KEY,
-  name VARCHAR(255) NOT NULL UNIQUE,
+  name VARCHAR(255) NOT NULL,
   ip_address VARCHAR(45) NOT NULL,
-  api_key VARCHAR(64) NOT NULL UNIQUE,
+  api_key VARCHAR(64) NOT NULL,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  last_heartbeat TIMESTAMP WITH TIME ZONE
+  last_heartbeat TIMESTAMP WITH TIME ZONE,
+  UNIQUE (api_key, name)
 );
+
+-- Migration: replace individual unique constraints with composite (api_key, name)
+DO $$ BEGIN
+  ALTER TABLE servers DROP CONSTRAINT IF EXISTS servers_api_key_key;
+  ALTER TABLE servers DROP CONSTRAINT IF EXISTS servers_name_key;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'servers_api_key_name_key'
+  ) THEN
+    ALTER TABLE servers ADD CONSTRAINT servers_api_key_name_key UNIQUE (api_key, name);
+  END IF;
+END $$;
 
 -- Metrics table: Time-series metrics data
 CREATE TABLE IF NOT EXISTS metrics (
