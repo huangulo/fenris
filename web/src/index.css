@@ -1,3 +1,50 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  :root { color-scheme: dark; }
+
+  html, body, #root {
+    height: 100%;
+    overflow: hidden;
+  }
+
+  body {
+    background-color: #0b0f1a;
+    color: #e2e8f0;
+    font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Thin custom scrollbar */
+  ::-webkit-scrollbar          { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track    { background: transparent; }
+  ::-webkit-scrollbar-thumb    { background: #1f2937; border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #374151; }
+}
+
+@layer utilities {
+  .font-value { @apply font-mono tabular-nums; }
+
+  /* Card surfaces */
+  .card {
+    @apply bg-gray-900 border border-gray-800/80 rounded-xl;
+  }
+  .card-sm {
+    @apply bg-gray-800/60 border border-gray-700/60 rounded-lg;
+  }
+
+  /* Sidebar nav item active glow */
+  .nav-active {
+    @apply bg-cyan-500/10 text-cyan-400 border-l-2 border-cyan-500;
+  }
+  .nav-inactive {
+    @apply text-gray-400 hover:text-gray-200 hover:bg-white/5 border-l-2 border-transparent;
+  }
+
+  /* Recharts tooltip reset */
+  .recharts-default-tooltip {
+    @apply !bg-gray-900 !border !border-gray-700 !rounded-lg !text-xs !font-mono;
+  }
+}
