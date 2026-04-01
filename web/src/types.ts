@@ -52,6 +52,7 @@ export interface DockerSnapshot {
 export interface ServerSparklines {
   cpu:  number[];
   mem:  number[];
+  disk: number[];
 }
 
 export interface AppData {

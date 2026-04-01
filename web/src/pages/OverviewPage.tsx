@@ -3,57 +3,97 @@ import { ServerRow, MetricRow, AlertRow, DockerSnapshot, ServerSparklines } from
 import { isOnline, fmtRelativeTime, metricColor, metricTextClass } from '../utils';
 import { Sparkline } from '../components/Sparkline';
 import { OnlineDot } from '../components/Badges';
-import { SkeletonCard } from '../components/Skeleton';
 
 interface OverviewPageProps {
-  servers: ServerRow[];
-  allMetrics: MetricRow[];
-  alerts: AlertRow[];
-  docker: DockerSnapshot;
+  servers:        ServerRow[];
+  allMetrics:     MetricRow[];
+  alerts:         AlertRow[];
+  docker:         DockerSnapshot;
   onSelectServer: (id: number) => void;
 }
 
-// ── Helpers ────────────────────────────────────────────────────────────────────
+// ── Build per-server sparkline arrays from the bulk metrics fetch ──────────────
 
 function buildSparklines(metrics: MetricRow[]): Map<number, ServerSparklines> {
-  const map = new Map<number, { cpu: { v: number; ts: number }[]; mem: { v: number; ts: number }[] }>();
+  const raw = new Map<number, {
+    cpu:  { v: number; ts: number }[];
+    mem:  { v: number; ts: number }[];
+    disk: { v: number; ts: number }[];
+  }>();
 
   for (const m of metrics) {
-    if (!map.has(m.server_id)) map.set(m.server_id, { cpu: [], mem: [] });
-    const entry = map.get(m.server_id)!;
+    if (!raw.has(m.server_id)) raw.set(m.server_id, { cpu: [], mem: [], disk: [] });
+    const e = raw.get(m.server_id)!;
     const ts = new Date(m.timestamp).getTime();
 
-    if (m.metric_type === 'cpu' && m.value.cpu) {
-      entry.cpu.push({ v: m.value.cpu.usage_percent, ts });
-    } else if (m.metric_type === 'memory' && m.value.memory) {
-      entry.mem.push({ v: m.value.memory.used_percent, ts });
-    }
+    if      (m.metric_type === 'cpu'    && m.value.cpu)    e.cpu.push({ v: m.value.cpu.usage_percent,    ts });
+    else if (m.metric_type === 'memory' && m.value.memory) e.mem.push({ v: m.value.memory.used_percent,  ts });
+    else if (m.metric_type === 'disk'   && m.value.disk)   e.disk.push({ v: m.value.disk.used_percent,   ts });
   }
 
   const result = new Map<number, ServerSparklines>();
-  for (const [id, { cpu, mem }] of map) {
+  for (const [id, { cpu, mem, disk }] of raw) {
     const sort = (arr: { v: number; ts: number }[]) =>
       arr.sort((a, b) => a.ts - b.ts).slice(-20).map(x => x.v);
-    result.set(id, { cpu: sort(cpu), mem: sort(mem) });
+    result.set(id, { cpu: sort(cpu), mem: sort(mem), disk: sort(disk) });
   }
   return result;
 }
 
-// ── Cluster stats bar ─────────────────────────────────────────────────────────
+// ── Build per-server container counts from the latest docker metrics ───────────
+
+function buildContainerCounts(metrics: MetricRow[]): Map<number, { running: number; total: number }> {
+  // Only keep the most recent docker metric per server
+  const latest = new Map<number, MetricRow>();
+  for (const m of metrics) {
+    if (m.metric_type !== 'docker') continue;
+    const existing = latest.get(m.server_id);
+    if (!existing || new Date(m.timestamp) > new Date(existing.timestamp)) {
+      latest.set(m.server_id, m);
+    }
+  }
+  const result = new Map<number, { running: number; total: number }>();
+  for (const [id, m] of latest) {
+    const containers = (m.value as any).docker as Array<{ state: string }> | undefined ?? [];
+    result.set(id, {
+      running: containers.filter(c => c.state === 'running').length,
+      total:   containers.length,
+    });
+  }
+  return result;
+}
+
+// ── Cluster stat pill ─────────────────────────────────────────────────────────
 
 function StatPill({ label, value, sub, accent }: {
-  label: string;
-  value: string | number;
-  sub?: string;
+  label:   string;
+  value:   string | number;
+  sub?:    string;
   accent?: string;
 }) {
   return (
-    <div className="card px-5 py-4 flex flex-col gap-1 min-w-[120px]">
-      <span className="text-[11px] uppercase tracking-widest text-gray-500 font-medium">{label}</span>
+    <div className="card px-5 py-4 flex flex-col gap-1.5 min-w-[110px]">
+      <span className="text-[10px] uppercase tracking-widest text-gray-600 font-medium">{label}</span>
       <span className={`font-mono font-bold text-2xl leading-none ${accent ?? 'text-white'}`}>
         {value}
       </span>
-      {sub && <span className="text-xs text-gray-600 font-mono">{sub}</span>}
+      {sub && <span className="text-[11px] text-gray-600 font-mono">{sub}</span>}
+    </div>
+  );
+}
+
+// ── Mini sparkline strip ──────────────────────────────────────────────────────
+
+function SparkStrip({ label, values, pct }: { label: string; values: number[]; pct: number }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center justify-between">
+        <span className="text-[9px] uppercase tracking-widest text-gray-600">{label}</span>
+        <span className={`text-[10px] font-mono font-semibold ${metricTextClass(pct)}`}>
+          {pct.toFixed(0)}%
+        </span>
+      </div>
+      <Sparkline values={values} color={metricColor(pct)} width={72} height={20} />
     </div>
   );
 }
@@ -61,87 +101,61 @@ function StatPill({ label, value, sub, accent }: {
 // ── Server card ───────────────────────────────────────────────────────────────
 
 interface ServerCardProps {
-  server: ServerRow;
-  sparklines: ServerSparklines;
-  containerCount: { running: number; total: number };
-  alertCount: number;
-  onClick: () => void;
+  server:         ServerRow;
+  sparklines:     ServerSparklines;
+  containers:     { running: number; total: number };
+  alertCount:     number;
+  onClick:        () => void;
 }
 
-function ServerCard({ server, sparklines, containerCount, alertCount, onClick }: ServerCardProps) {
-  const online = isOnline(server.last_heartbeat);
-  const latestCpu = sparklines.cpu.at(-1) ?? 0;
-  const latestMem = sparklines.mem.at(-1) ?? 0;
+function ServerCard({ server, sparklines, containers, alertCount, onClick }: ServerCardProps) {
+  const online   = isOnline(server.last_heartbeat);
+  const latestCpu  = sparklines.cpu.at(-1)  ?? 0;
+  const latestMem  = sparklines.mem.at(-1)  ?? 0;
+  const latestDisk = sparklines.disk.at(-1) ?? 0;
 
   return (
     <button
       onClick={onClick}
-      className="card p-4 text-left hover:border-gray-700 hover:bg-gray-800/40 active:scale-[0.99] transition-all duration-150 group w-full"
+      className="card p-4 text-left hover:border-gray-700/80 hover:bg-gray-800/30 active:scale-[0.99] transition-all duration-150 group w-full"
     >
-      {/* Header row */}
-      <div className="flex items-center justify-between mb-3">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2 min-w-0">
           <OnlineDot online={online} />
-          <span className="font-semibold text-sm text-white truncate">{server.name}</span>
+          <span className="font-semibold text-[13px] text-white truncate leading-none">
+            {server.name}
+          </span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-shrink-0">
           {alertCount > 0 && (
-            <span className="text-[10px] font-mono bg-red-500/20 text-red-400 border border-red-700/40 rounded px-1.5 py-0.5">
-              {alertCount} alert{alertCount > 1 ? 's' : ''}
+            <span className="text-[10px] font-mono bg-red-500/15 text-red-400 border border-red-800/40 rounded-md px-1.5 py-0.5 leading-none">
+              {alertCount}▲
             </span>
           )}
-          <svg
-            width="14" height="14" viewBox="0 0 24 24" fill="none"
-            stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-            className="text-gray-700 group-hover:text-gray-500 transition-colors flex-shrink-0"
-          >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+            className="text-gray-700 group-hover:text-gray-500 transition-colors">
             <polyline points="9 18 15 12 9 6"/>
           </svg>
         </div>
       </div>
 
-      {/* Sparkline row */}
-      <div className="grid grid-cols-2 gap-3 mb-3">
-        {/* CPU */}
-        <div className="card-sm px-3 py-2">
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-[10px] uppercase tracking-widest text-gray-600">CPU</span>
-            <span className={`text-xs font-mono font-semibold ${metricTextClass(latestCpu)}`}>
-              {latestCpu.toFixed(1)}%
-            </span>
-          </div>
-          <Sparkline
-            values={sparklines.cpu}
-            color={metricColor(latestCpu)}
-            width={88}
-            height={24}
-          />
-        </div>
-        {/* Memory */}
-        <div className="card-sm px-3 py-2">
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-[10px] uppercase tracking-widest text-gray-600">MEM</span>
-            <span className={`text-xs font-mono font-semibold ${metricTextClass(latestMem)}`}>
-              {latestMem.toFixed(1)}%
-            </span>
-          </div>
-          <Sparkline
-            values={sparklines.mem}
-            color={metricColor(latestMem)}
-            width={88}
-            height={24}
-          />
-        </div>
+      {/* Sparkline grid: 3 columns */}
+      <div className="grid grid-cols-3 gap-3 mb-4 px-1">
+        <SparkStrip label="CPU"  values={sparklines.cpu}  pct={latestCpu} />
+        <SparkStrip label="MEM"  values={sparklines.mem}  pct={latestMem} />
+        <SparkStrip label="DISK" values={sparklines.disk} pct={latestDisk} />
       </div>
 
-      {/* Footer row */}
-      <div className="flex items-center justify-between text-[11px] font-mono text-gray-600">
-        <span>
-          {containerCount.total > 0
-            ? `${containerCount.running}/${containerCount.total} containers`
-            : 'no containers'}
+      {/* Footer */}
+      <div className="flex items-center justify-between text-[10px] font-mono border-t border-gray-800/60 pt-3">
+        <span className="text-gray-600">
+          {containers.total > 0
+            ? `${containers.running}/${containers.total} containers`
+            : '—'}
         </span>
-        <span className={online ? 'text-gray-600' : 'text-red-500'}>
+        <span className={online ? 'text-gray-600' : 'text-red-500/80'}>
           {fmtRelativeTime(server.last_heartbeat)}
         </span>
       </div>
@@ -151,21 +165,15 @@ function ServerCard({ server, sparklines, containerCount, alertCount, onClick }:
 
 // ── Overview page ─────────────────────────────────────────────────────────────
 
-export function OverviewPage({
-  servers,
-  allMetrics,
-  alerts,
-  docker,
-  onSelectServer,
-}: OverviewPageProps) {
-  const sparklineMap = useMemo(() => buildSparklines(allMetrics), [allMetrics]);
+export function OverviewPage({ servers, allMetrics, alerts, docker, onSelectServer }: OverviewPageProps) {
+  const sparklineMap    = useMemo(() => buildSparklines(allMetrics),     [allMetrics]);
+  const containerMap    = useMemo(() => buildContainerCounts(allMetrics), [allMetrics]);
 
-  const onlineCount   = servers.filter(s => isOnline(s.last_heartbeat)).length;
-  const activeAlerts  = alerts.filter(a => !a.acknowledged).length;
-  const runningCtrs   = docker.containers.filter(c => c.state === 'running').length;
-  const totalCtrs     = docker.containers.length;
+  const onlineCount    = servers.filter(s => isOnline(s.last_heartbeat)).length;
+  const activeAlerts   = alerts.filter(a => !a.acknowledged).length;
+  const runningCtrs    = docker.containers.filter(c => c.state === 'running').length;
+  const totalCtrs      = docker.containers.length;
 
-  // Per-server alert counts
   const alertsByServer = useMemo(() => {
     const m = new Map<number, number>();
     for (const a of alerts) {
@@ -177,41 +185,44 @@ export function OverviewPage({
   if (servers.length === 0) {
     return (
       <div className="p-8 flex flex-col items-center justify-center gap-4 text-center min-h-[50vh]">
-        <div className="w-12 h-12 rounded-full bg-gray-800 flex items-center justify-center mb-2">
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#4b5563" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <div className="w-14 h-14 rounded-2xl bg-gray-800/60 border border-gray-800 flex items-center justify-center mb-1">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#374151" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
             <rect x="2" y="2" width="20" height="8" rx="2"/>
             <rect x="2" y="14" width="20" height="8" rx="2"/>
+            <line x1="6" y1="6" x2="6.01" y2="6"/>
+            <line x1="6" y1="18" x2="6.01" y2="18"/>
           </svg>
         </div>
-        <p className="text-sm text-gray-400 font-medium">No agents connected</p>
-        <p className="text-xs text-gray-600 max-w-xs">
-          Start a Fenris agent on a host to begin collecting metrics.
-          See the README for configuration instructions.
+        <p className="text-sm font-medium text-gray-400">No agents connected</p>
+        <p className="text-xs text-gray-600 max-w-xs leading-relaxed">
+          Deploy a Fenris agent on each host you want to monitor. Configure it with
+          the server URL and an API key, then it will register automatically.
         </p>
       </div>
     );
   }
 
   return (
-    <div className="p-6 space-y-6 max-w-6xl mx-auto">
+    <div className="p-6 space-y-7 max-w-6xl mx-auto">
+
       {/* Cluster stats */}
       <div>
-        <h2 className="text-[11px] uppercase tracking-widest text-gray-600 mb-3">Cluster</h2>
+        <h2 className="text-[10px] uppercase tracking-widest text-gray-600 mb-3">Cluster Overview</h2>
         <div className="flex flex-wrap gap-3">
           <StatPill
-            label="Servers"
+            label="Servers online"
             value={onlineCount}
-            sub={`${servers.length - onlineCount} offline`}
-            accent={onlineCount > 0 ? 'text-emerald-400' : 'text-gray-400'}
+            sub={`of ${servers.length} total`}
+            accent={onlineCount > 0 ? 'text-emerald-400' : 'text-gray-500'}
           />
           <StatPill
             label="Containers"
             value={runningCtrs}
-            sub={`${totalCtrs} total`}
+            sub={totalCtrs > 0 ? `${totalCtrs} total` : undefined}
             accent="text-cyan-400"
           />
           <StatPill
-            label="Active Alerts"
+            label="Active alerts"
             value={activeAlerts}
             accent={activeAlerts > 0 ? 'text-red-400' : 'text-emerald-400'}
           />
@@ -220,26 +231,26 @@ export function OverviewPage({
 
       {/* Server grid */}
       <div>
-        <h2 className="text-[11px] uppercase tracking-widest text-gray-600 mb-3">Servers</h2>
+        <h2 className="text-[10px] uppercase tracking-widest text-gray-600 mb-3">
+          Servers
+          <span className="ml-2 normal-case text-gray-700">
+            {onlineCount}/{servers.length} online
+          </span>
+        </h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-          {servers.map(server => {
-            const lines = sparklineMap.get(server.id) ?? { cpu: [], mem: [] };
-            // Container counts come from the all-server docker snapshot
-            // (approximation: not perfect when docker data is single-server)
-            const alertCnt = alertsByServer.get(server.id) ?? 0;
-            return (
-              <ServerCard
-                key={server.id}
-                server={server}
-                sparklines={lines}
-                containerCount={{ running: 0, total: 0 }}
-                alertCount={alertCnt}
-                onClick={() => onSelectServer(server.id)}
-              />
-            );
-          })}
+          {servers.map(server => (
+            <ServerCard
+              key={server.id}
+              server={server}
+              sparklines={sparklineMap.get(server.id) ?? { cpu: [], mem: [], disk: [] }}
+              containers={containerMap.get(server.id) ?? { running: 0, total: 0 }}
+              alertCount={alertsByServer.get(server.id) ?? 0}
+              onClick={() => onSelectServer(server.id)}
+            />
+          ))}
         </div>
       </div>
+
     </div>
   );
 }
