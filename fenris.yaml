@@ -70,7 +70,7 @@ disk_paths:
 anomaly_detection:
   enabled: true
   algorithm: zscore
-  zscore_threshold: 3.0
+  zscore_threshold: 3.5  # Raised from 3.0 — reduces false positives on memory and docker CPU
   window_size: 100  # Number of data points for baseline
   min_samples: 60  # Minimum samples before triggering alerts (~30 min of data at 30s)
 
