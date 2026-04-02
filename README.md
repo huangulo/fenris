@@ -14,21 +14,30 @@ Fenris is a self-hosted, three-tier monitoring stack: lightweight per-host agent
 
 - **Agent-based collection** — deploy one small agent per host; zero polling from the server
 - **Z-score anomaly detection** — statistical baseline per metric, fires only on genuine spikes
+- **Predictive alerting** — linear regression projects disk/CPU/memory exhaustion days in advance
 - **Docker container monitoring** — per-container CPU, memory, network, state-transition alerts
-- **Multi-channel alerts** — Discord and Slack webhooks, per-severity routing, 15-minute cooldown
+- **Multi-channel alerts** — Discord, Slack, and Email; per-severity routing, 15-minute cooldown
+- **Alert channel testing** — `POST /api/v1/test-alert` + Settings UI button to verify webhooks
+- **AI incident summaries** — optional OpenAI integration batches and explains alert clusters
 - **Dark React dashboard** — server cards with sparklines, circular gauges, 1-hour history charts
 - **Data retention** — configurable per-metric and per-alert TTL, hourly background cleanup
-- **One-line install** — curl installer handles prerequisites, keys, and Docker Compose in one shot
+- **One-line agent install** — curl installer handles sparse clone, Docker GID, and Compose setup
 
 ---
 
 ## Quick Start
 
+**Full server stack** (PostgreSQL + API server + React dashboard):
 ```sh
-curl -fsSL https://raw.githubusercontent.com/your-org/fenris/main/install.sh | sh
+git clone https://github.com/huangulo/fenris.git && cd fenris
+cp .env.example .env && $EDITOR .env   # set POSTGRES_PASSWORD, DISCORD_WEBHOOK_URL, etc.
+docker compose up -d --build
 ```
 
-The installer will ask whether you want a **server** (full stack) or **agent** (metrics collector only), then handle the rest. Re-running the script is safe — it will update an existing install.
+**Agent only** (metrics collector for a remote host):
+```sh
+curl -fsSL https://raw.githubusercontent.com/huangulo/fenris/main/install-agent.sh | sh
+```
 
 ---
 
@@ -76,48 +85,53 @@ The API server runs on port **3200**.
 
 ## Deploying an Agent
 
-Each host you want to monitor runs one agent container (or bare Node process).
-
-### Docker (recommended)
+Each host you want to monitor runs one agent container. The fastest way is the one-liner installer:
 
 ```sh
-git clone https://github.com/your-org/fenris.git ~/.fenris-agent
-cd ~/.fenris-agent
-
-cat > fenris-agent.yaml <<EOF
-server:
-  url: http://YOUR_SERVER_IP:3200
-  api_key: YOUR_API_KEY
-  hostname: $(hostname)
-
-collection:
-  interval: 30s
-  docker: true
-  docker_socket: /var/run/docker.sock
-EOF
-
-docker compose up -d agent
+curl -fsSL https://raw.githubusercontent.com/huangulo/fenris/main/install-agent.sh | sh
 ```
 
-### Bare Node
+The script will prompt for your Fenris server URL, API key, and a server name (defaults to `hostname`). It then:
+
+1. Sparse-clones just the `agent/` directory from GitHub (no full repo clone)
+2. Detects your Docker socket GID automatically
+3. Writes `/opt/fenris-agent/fenris-agent.yaml` and `docker-compose.yml`
+4. Builds the image and starts the container (`restart: unless-stopped`)
+5. Confirms the first successful POST to your server
+
+To update an existing agent, re-run the same command — the script is idempotent.
+
+### Manual deploy
+
+If you prefer to set things up yourself:
 
 ```sh
-cd agent
-npm install
-npm run build
-FENRIS_CONFIG=/path/to/fenris-agent.yaml node dist/index.js
+git clone --filter=blob:none --depth=1 https://github.com/huangulo/fenris.git
+cd fenris/agent
+
+cat > /opt/fenris-agent/fenris-agent.yaml <<EOF
+server_url: "http://YOUR_SERVER_IP:3200"
+api_key: "YOUR_API_KEY"
+server_name: "$(hostname)"
+collect_interval: "30s"
+docker_enabled: true
+disk_paths:
+  - /
+EOF
+
+docker compose -f /opt/fenris-agent/docker-compose.yml up -d
 ```
 
 ### Agent configuration (`fenris-agent.yaml`)
 
 | Field | Default | Description |
 |---|---|---|
-| `server.url` | — | HTTP URL of the Fenris server |
-| `server.api_key` | — | API key from server setup |
-| `server.hostname` | system hostname | Name shown in the dashboard |
-| `collection.interval` | `30s` | Metrics push interval |
-| `collection.docker` | `false` | Enable Docker container stats |
-| `collection.docker_socket` | `/var/run/docker.sock` | Docker socket path |
+| `server_url` | — | HTTP URL of the Fenris server |
+| `api_key` | — | API key sent as `X-API-Key` header |
+| `server_name` | system hostname | Name shown in the dashboard |
+| `collect_interval` | `30s` | Metrics push interval |
+| `docker_enabled` | `true` | Enable Docker container stats |
+| `disk_paths` | `[/]` | Mount paths to monitor |
 
 ---
 
@@ -243,8 +257,18 @@ All `/api/` routes require the header `X-API-Key: <key>` unless noted otherwise.
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| `GET` | `/api/v1/alerts` | key | List alerts. Query: `limit`, `server_id`, `severity`, `acknowledged` (`true`/`false`). |
+| `GET` | `/api/v1/alerts` | key | List alerts. Query: `limit`, `server_id`, `severity`, `acknowledged` (`true`/`false`). Response includes `summary_id` when an AI summary exists. |
 | `POST` | `/api/v1/alerts/:id/acknowledge` | key | Acknowledge a single alert by ID. |
+| `POST` | `/api/v1/test-alert` | key | Fire a test `info`-severity alert through every configured notification channel. Optional body: `{ "channels": ["discord", "slack", "email"] }`. Returns `{ "sent": [...], "failed": [...], "disabled": [...] }`. Does **not** write to the database. |
+
+### AI Summaries
+
+Requires `ai.enabled: true` and a valid `ai.api_key` in `fenris.yaml`.
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `GET` | `/api/v1/alerts/:id/summary` | key | Returns the AI-generated summary that covers this alert (404 if none). |
+| `GET` | `/api/v1/summaries` | key | Recent AI summaries. Query: `server_id`, `limit` (max 50, default 10). |
 
 ### Docker
 
