@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, ServerRow, MetricRow, AlertRow, DockerSnapshot } from './types';
+import { View, ServerRow, MetricRow, AlertRow, DockerSnapshot, SummaryRow } from './types';
 import { apiFetch } from './api';
 import { Sidebar } from './layout/Sidebar';
 import { TopBar } from './layout/TopBar';
@@ -25,6 +25,7 @@ export default function App() {
   const [docker,        setDocker]        = useState<DockerSnapshot>({ containers: [], timestamp: null });
   const [serverDocker,  setServerDocker]  = useState<DockerSnapshot>({ containers: [], timestamp: null });
   const [serverConfig,  setServerConfig]  = useState<Record<string, unknown> | null>(null);
+  const [summaries,     setSummaries]     = useState<SummaryRow[]>([]);
 
   // ── UI state ────────────────────────────────────────────────────────────────
   const [loading,      setLoading]      = useState(true);
@@ -89,6 +90,16 @@ export default function App() {
     } catch { /* silent */ }
   }, []);
 
+  const fetchSummaries = useCallback(async (serverId?: number) => {
+    try {
+      const url = serverId != null
+        ? `/api/v1/summaries?server_id=${serverId}&limit=5`
+        : '/api/v1/summaries?limit=10';
+      const res = await apiFetch(url);
+      if (res.ok) setSummaries(await res.json());
+    } catch { /* silent */ }
+  }, []);
+
   // ── Refresh orchestration ────────────────────────────────────────────────────
   const refreshAll = useCallback(async () => {
     await Promise.all([
@@ -96,19 +107,21 @@ export default function App() {
       fetchAllMetrics(),
       fetchAlerts(),
       fetchDocker(null),
+      fetchSummaries(),
     ]);
     setLastRefresh(new Date());
     setLoading(false);
-  }, [fetchServers, fetchAllMetrics, fetchAlerts, fetchDocker]);
+  }, [fetchServers, fetchAllMetrics, fetchAlerts, fetchDocker, fetchSummaries]);
 
   const refreshForServer = useCallback(async (id: number) => {
     await Promise.all([
       fetchServerMetrics(id),
       fetchDocker(id),
       fetchAlerts(),
+      fetchSummaries(id),
     ]);
     setLastRefresh(new Date());
-  }, [fetchServerMetrics, fetchDocker, fetchAlerts]);
+  }, [fetchServerMetrics, fetchDocker, fetchAlerts, fetchSummaries]);
 
   // Initial load + 30s poll
   useEffect(() => {
@@ -188,6 +201,7 @@ export default function App() {
             metrics={serverMetrics}
             docker={serverDocker}
             alerts={alerts}
+            summaries={summaries.filter(s => s.server_id === selectedServerId)}
             onBack={() => navigateTo('overview')}
             onSelectServer={(id) => { setSelectedServerId(id); }}
           />
@@ -197,6 +211,7 @@ export default function App() {
           <AlertsPage
             alerts={alerts}
             servers={servers}
+            summaries={summaries}
             onAcknowledge={acknowledgeAlert}
             onAcknowledgeMany={acknowledgeMany}
           />
