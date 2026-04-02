@@ -17,6 +17,11 @@ async function loadConfig(): Promise<Config> {
   try {
     const configData = readFileSync(configPath, 'utf8');
     config = load(configData) as Config;
+    // js-yaml does not expand ${ENV_VAR} placeholders — override database_url
+    // from the environment so Docker-compose-injected credentials are used.
+    if (process.env.DATABASE_URL) {
+      config.server.database_url = process.env.DATABASE_URL;
+    }
     console.log('Configuration loaded from:', configPath);
     return config;
   } catch (error) {
@@ -58,7 +63,7 @@ async function loadConfig(): Promise<Config> {
       anomaly_detection: {
         enabled: true,
         algorithm: 'zscore',
-        zscore_threshold: 3.0,
+        zscore_threshold: 3.5,
         window_size: 100,
         min_samples: 60
       }
