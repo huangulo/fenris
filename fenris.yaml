@@ -74,6 +74,30 @@ anomaly_detection:
   window_size: 100  # Number of data points for baseline
   min_samples: 60  # Minimum samples before triggering alerts (~30 min of data at 30s)
 
+# Predictive Alerting
+predictions:
+  enabled: true
+  interval: "5m"              # How often to run predictions
+  disk_horizon_days: 7        # Alert if disk full within this many days
+  cpu_horizon_hours: 1        # Alert if CPU sustained high within this many hours
+  memory_horizon_hours: 1     # Alert if memory sustained high within this many hours
+  disk_threshold: 85          # % to predict breach for disk
+  cpu_threshold: 90           # % to predict breach for CPU
+  memory_threshold: 90        # % to predict breach for memory
+  min_samples: 120            # Minimum data points for regression (~1 hr at 30s)
+  min_confidence: 0.5         # Minimum R² to consider the trend reliable
+
+# AI Incident Summaries (disabled by default — set api_key to enable)
+ai:
+  enabled: false
+  provider: "xai"
+  api_url: "https://api.x.ai/v1/chat/completions"
+  api_key: ""                 # Set to your xAI Grok API key
+  model: "grok-3-mini"
+  max_calls_per_hour: 10
+  batch_window_ms: 120000     # 2 minutes — wait before summarising a batch
+  cooldown_per_server_ms: 900000  # 15 minutes between summaries per server
+
 # Data Retention
 retention:
   metrics_days: 30  # Keep metrics for 30 days
