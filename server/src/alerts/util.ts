@@ -1,20 +1,19 @@
 import { Alert } from '../types.js';
 
 /**
- * Shared cooldown store — keyed by "channel:alertId" so each channel
- * tracks its own last-sent time independently.
+ * Shared cooldown store — keyed by "channel:server_id:metric_type" so the
+ * same metric type on the same server is throttled across all alert messages.
+ * Resets on server restart (in-memory), but that is acceptable — a restart
+ * itself resets the anomaly detector history anyway.
  */
 const lastSent = new Map<string, number>();
-const COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
+const COOLDOWN_MS = 15 * 60 * 1000; // 15 minutes per (server, metric_type)
 
 /**
  * Returns true if this alert should fire on the given channel:
  *  - The channel is enabled
  *  - The alert's severity is in the channel's severity_levels list
- *  - The cooldown for this (channel, alert-message) pair has expired
- *
- * Uses the alert message as the dedup key so repeated identical anomalies
- * are throttled even if the DB id differs.
+ *  - The 15-minute cooldown for (channel, server_id, metric_type) has expired
  */
 export function shouldAlert(
   channel: string,
@@ -25,7 +24,7 @@ export function shouldAlert(
   if (!enabled) return false;
   if (!severityLevels.includes(alert.severity)) return false;
 
-  const key = `${channel}:${alert.message}`;
+  const key = `${channel}:${alert.server_id}:${alert.metric_type ?? 'unknown'}`;
   const now = Date.now();
   const last = lastSent.get(key) ?? 0;
   if (now - last < COOLDOWN_MS) return false;

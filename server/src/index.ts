@@ -60,7 +60,7 @@ async function loadConfig(): Promise<Config> {
         algorithm: 'zscore',
         zscore_threshold: 3.0,
         window_size: 100,
-        min_samples: 30
+        min_samples: 60
       }
     };
     return config;
