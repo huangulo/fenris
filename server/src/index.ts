@@ -85,10 +85,10 @@ async function loadConfig(): Promise<Config> {
       },
       ai: {
         enabled: false,
-        provider: 'xai',
-        api_url: 'https://api.x.ai/v1/chat/completions',
+        provider: 'openai',
+        api_url: 'https://api.openai.com/v1/chat/completions',
         api_key: '',
-        model: 'grok-3-mini',
+        model: 'gpt-4o-mini',
         max_calls_per_hour: 10,
         batch_window_ms: 120_000,
         cooldown_per_server_ms: 900_000,

@@ -90,10 +90,10 @@ predictions:
 # AI Incident Summaries (disabled by default — set api_key to enable)
 ai:
   enabled: false
-  provider: "xai"
-  api_url: "https://api.x.ai/v1/chat/completions"
-  api_key: ""                 # Set to your xAI Grok API key
-  model: "grok-3-mini"
+  provider: "openai"
+  api_url: "https://api.openai.com/v1/chat/completions"
+  api_key: ""                 # Set to your OpenAI API key
+  model: "gpt-4o-mini"
   max_calls_per_hour: 10
   batch_window_ms: 120000     # 2 minutes — wait before summarising a batch
   cooldown_per_server_ms: 900000  # 15 minutes between summaries per server
