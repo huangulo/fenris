@@ -46,6 +46,13 @@ export async function ingestMetrics(metrics: Metric[]): Promise<{ anomaliesDetec
       [metric.server_id, metric.metric_type, JSON.stringify(metric.value), metric.timestamp]
     );
 
+    // Network rx_bytes is highly variable (orders-of-magnitude bursts are normal
+    // traffic); z-score on raw byte counts produces constant false positives.
+    // Skip anomaly detection for network — thresholds are not applicable either.
+    if (metric.metric_type === 'network') {
+      continue;
+    }
+
     if (metric.metric_type === 'docker') {
       const containers = metric.value.docker ?? [];
       for (const c of containers) {
