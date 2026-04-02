@@ -246,12 +246,9 @@ async function start(): Promise<void> {
       predictor.start();
     }
 
-    // Start summarizer
-    const aiCfg = config.ai;
-    if (aiCfg) {
-      summarizer = new Summarizer(aiCfg, (s) => { /* summary stored inline */ void s; });
-      summarizer.start();
-    }
+    // Summarizer is started inside initServices (routes.ts); keep a reference for graceful shutdown
+    const { getSummarizer } = await import('./api/routes.js');
+    summarizer = getSummarizer();
     
   } catch (error) {
     console.error('Failed to start server:', error);

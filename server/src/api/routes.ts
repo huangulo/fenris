@@ -2,11 +2,13 @@ import { FastifyRequest, FastifyReply } from 'fastify';
 import { query } from '../db/client.js';
 import { AnomalyDetector } from '../engine/anomaly.js';
 import { AlertDispatcher } from '../alerts/dispatcher.js';
+import { Summarizer } from '../engine/summarizer.js';
 import { Metric, Alert, ContainerStats, Config } from '../types.js';
 
 // Global instances
 let detector: AnomalyDetector;
 let dispatcher: AlertDispatcher;
+let summarizer: Summarizer | null = null;
 let config: Config;
 
 // Fenris containers excluded from anomaly detection (self-referential noise)
@@ -16,10 +18,17 @@ export function initServices(cfg: Config): void {
   config = cfg;
   detector = new AnomalyDetector(cfg.anomaly_detection);
   dispatcher = new AlertDispatcher(cfg);
+  if (cfg.ai) {
+    summarizer = new Summarizer(cfg.ai);
+    summarizer.start();
+  }
 }
 
 export function getDispatcher(): AlertDispatcher {
-  return dispatcher;
+  return dispatcher;}
+
+export function getSummarizer(): Summarizer | null {
+  return summarizer;
 }
 
 export async function healthCheck(request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> {
@@ -147,6 +156,7 @@ export async function ingestMetrics(metrics: Metric[]): Promise<{ anomaliesDetec
 
     alert.id = alertResult.rows[0].id;
     await dispatcher.dispatchAlert(alert);
+    summarizer?.enqueue(alert);
   }
 
   return { anomaliesDetected: anomalyResults.size };
@@ -401,6 +411,60 @@ export async function acknowledgeAlert(request: FastifyRequest<{ Params: { id: s
   } catch (error) {
     console.error('Error acknowledging alert:', error);
     return reply.status(500).send({ error: 'Failed to acknowledge alert' });
+  }
+}
+
+export async function getAlertSummary(
+  request: FastifyRequest<{ Params: { id: string } }>,
+  reply: FastifyReply
+): Promise<FastifyReply> {
+  try {
+    const alertId = parseInt(request.params.id);
+    const result = await query(
+      `SELECT s.id, s.summary, s.model, s.created_at, s.alert_ids
+       FROM alert_summaries s
+       JOIN alerts a ON a.summary_id = s.id
+       WHERE a.id = $1`,
+      [alertId]
+    );
+    if (result.rows.length === 0) {
+      return reply.status(404).send({ error: 'No summary for this alert' });
+    }
+    return reply.send(result.rows[0]);
+  } catch (error) {
+    console.error('Error fetching alert summary:', error);
+    return reply.status(500).send({ error: 'Failed to fetch summary' });
+  }
+}
+
+export async function listSummaries(request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> {
+  try {
+    const limit = Math.min(parseInt((request.query as any).limit || '10'), 50);
+    const serverIdParam = (request.query as any).server_id;
+
+    let result;
+    if (serverIdParam) {
+      result = await query(
+        `SELECT s.*, srv.name AS server_name
+         FROM alert_summaries s
+         LEFT JOIN servers srv ON srv.id = s.server_id
+         WHERE s.server_id = $1
+         ORDER BY s.created_at DESC LIMIT $2`,
+        [parseInt(serverIdParam), limit]
+      );
+    } else {
+      result = await query(
+        `SELECT s.*, srv.name AS server_name
+         FROM alert_summaries s
+         LEFT JOIN servers srv ON srv.id = s.server_id
+         ORDER BY s.created_at DESC LIMIT $1`,
+        [limit]
+      );
+    }
+    return reply.send(result.rows);
+  } catch (error) {
+    console.error('Error listing summaries:', error);
+    return reply.status(500).send({ error: 'Failed to list summaries' });
   }
 }
 

@@ -67,6 +67,28 @@ INSERT INTO servers (id, name, ip_address, api_key)
 VALUES (1, 'local', '127.0.0.1', 'local-default-key')
 ON CONFLICT DO NOTHING;
 
+-- AI Incident Summaries
+CREATE TABLE IF NOT EXISTS alert_summaries (
+  id         SERIAL PRIMARY KEY,
+  server_id  INTEGER REFERENCES servers(id) ON DELETE CASCADE,
+  alert_ids  INTEGER[] NOT NULL,
+  summary    TEXT NOT NULL,
+  model      VARCHAR(100),
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_summaries_server_id   ON alert_summaries(server_id);
+CREATE INDEX IF NOT EXISTS idx_summaries_created_at  ON alert_summaries(created_at DESC);
+
+-- Link alerts back to the summary that covers them (nullable — most alerts have none)
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'alerts' AND column_name = 'summary_id'
+  ) THEN
+    ALTER TABLE alerts ADD COLUMN summary_id INTEGER REFERENCES alert_summaries(id) ON DELETE SET NULL;
+  END IF;
+END $$;
+
 -- Trigger for automatic timestamp updates
 CREATE OR REPLACE FUNCTION update_timestamp()
 RETURNS TRIGGER AS $$
