@@ -1,19 +1,84 @@
 import React, { useState, useMemo } from 'react';
-import { AlertRow, ServerRow } from '../types';
+import { AlertRow, ServerRow, SummaryRow } from '../types';
 import { fmtRelativeTime } from '../utils';
 import { SeverityBadge } from '../components/Badges';
+import { apiFetch } from '../api';
 
 interface AlertsPageProps {
-  alerts: AlertRow[];
-  servers: ServerRow[];
-  onAcknowledge: (id: number) => void;
+  alerts:            AlertRow[];
+  servers:           ServerRow[];
+  summaries:         SummaryRow[];
+  onAcknowledge:     (id: number) => void;
   onAcknowledgeMany: (ids: number[]) => void;
 }
 
 type SeverityFilter = 'all' | 'critical' | 'warning' | 'info';
 type StatusFilter   = 'all' | 'active' | 'acknowledged';
 
-export function AlertsPage({ alerts, servers, onAcknowledge, onAcknowledgeMany }: AlertsPageProps) {
+// ── Inline AI summary panel ───────────────────────────────────────────────────
+
+function AISummaryInline({ alertId, summaries }: { alertId: number; summaries: SummaryRow[] }) {
+  const [text, setText]       = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [open, setOpen]       = useState(false);
+
+  // Check if this alert already has a summary in the pre-loaded list
+  const preloaded = useMemo(
+    () => summaries.find(s => s.alert_ids.includes(alertId)),
+    [summaries, alertId]
+  );
+
+  const toggle = async () => {
+    if (open) { setOpen(false); return; }
+    setOpen(true);
+    if (preloaded) { setText(preloaded.summary); return; }
+    if (text !== null) return; // already fetched
+
+    setLoading(true);
+    try {
+      const res = await apiFetch(`/api/v1/alerts/${alertId}/summary`);
+      if (res.ok) {
+        const data = await res.json() as { summary: string };
+        setText(data.summary);
+      } else {
+        setText('No AI summary available for this alert.');
+      }
+    } catch {
+      setText('Failed to load summary.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <span className="inline-flex flex-col items-end gap-1">
+      <button
+        onClick={toggle}
+        title="View AI summary"
+        className={`text-[10px] font-bold px-1.5 py-0.5 rounded border transition-colors ${
+          open
+            ? 'bg-violet-500/25 text-violet-300 border-violet-500/50'
+            : 'bg-violet-500/10 text-violet-400 border-violet-700/40 hover:bg-violet-500/20'
+        }`}
+      >
+        AI
+      </button>
+      {open && (
+        <div className="mt-1 w-72 text-left bg-gray-900 border border-violet-700/30 rounded-lg p-3 text-[11px] text-gray-300 leading-relaxed shadow-xl z-10">
+          {loading ? (
+            <span className="text-gray-500">Loading summary…</span>
+          ) : (
+            text
+          )}
+        </div>
+      )}
+    </span>
+  );
+}
+
+// ── Main page ─────────────────────────────────────────────────────────────────
+
+export function AlertsPage({ alerts, servers, summaries, onAcknowledge, onAcknowledgeMany }: AlertsPageProps) {
   const [serverFilter,   setServerFilter]   = useState<number | 'all'>('all');
   const [severityFilter, setSeverityFilter] = useState<SeverityFilter>('all');
   const [statusFilter,   setStatusFilter]   = useState<StatusFilter>('active');
@@ -29,9 +94,9 @@ export function AlertsPage({ alerts, servers, onAcknowledge, onAcknowledgeMany }
     });
   }, [alerts, serverFilter, severityFilter, statusFilter]);
 
-  const activeCount  = alerts.filter(a => !a.acknowledged).length;
+  const activeCount   = alerts.filter(a => !a.acknowledged).length;
   const selectableIds = filtered.filter(a => !a.acknowledged).map(a => a.id);
-  const allSelected  = selectableIds.length > 0 && selectableIds.every(id => selected.has(id));
+  const allSelected   = selectableIds.length > 0 && selectableIds.every(id => selected.has(id));
 
   const toggleSelect = (id: number) => {
     setSelected(prev => {
@@ -42,11 +107,8 @@ export function AlertsPage({ alerts, servers, onAcknowledge, onAcknowledgeMany }
   };
 
   const toggleAll = () => {
-    if (allSelected) {
-      setSelected(new Set());
-    } else {
-      setSelected(new Set(selectableIds));
-    }
+    if (allSelected) setSelected(new Set());
+    else             setSelected(new Set(selectableIds));
   };
 
   const bulkAck = () => {
@@ -63,6 +125,12 @@ export function AlertsPage({ alerts, servers, onAcknowledge, onAcknowledgeMany }
       onChange={() => toggleSelect(id)}
       className="w-3.5 h-3.5 rounded border-gray-600 bg-gray-800 accent-cyan-500 cursor-pointer"
     />
+  );
+
+  // Build a set of alert IDs that have a summary (for fast lookup)
+  const alertsWithSummary = useMemo(
+    () => new Set(summaries.flatMap(s => s.alert_ids)),
+    [summaries]
   );
 
   return (
@@ -89,7 +157,6 @@ export function AlertsPage({ alerts, servers, onAcknowledge, onAcknowledgeMany }
 
       {/* Filters */}
       <div className="flex flex-wrap gap-2">
-        {/* Server */}
         <select
           value={serverFilter === 'all' ? '' : serverFilter}
           onChange={e => setServerFilter(e.target.value === '' ? 'all' : parseInt(e.target.value))}
@@ -99,7 +166,6 @@ export function AlertsPage({ alerts, servers, onAcknowledge, onAcknowledgeMany }
           {servers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
 
-        {/* Severity */}
         <select
           value={severityFilter}
           onChange={e => setSeverityFilter(e.target.value as SeverityFilter)}
@@ -111,7 +177,6 @@ export function AlertsPage({ alerts, servers, onAcknowledge, onAcknowledgeMany }
           <option value="info">Info</option>
         </select>
 
-        {/* Status */}
         <div className="flex rounded-lg overflow-hidden border border-gray-700/60">
           {(['all', 'active', 'acknowledged'] as StatusFilter[]).map(s => (
             <button
@@ -158,7 +223,7 @@ export function AlertsPage({ alerts, servers, onAcknowledge, onAcknowledgeMany }
                 <th className="px-4 py-3 text-left">Message</th>
                 <th className="px-4 py-3 text-left hidden sm:table-cell">Type</th>
                 <th className="px-4 py-3 text-right">When</th>
-                <th className="px-4 py-3 w-16" />
+                <th className="px-4 py-3 w-20 text-right" />
               </tr>
             </thead>
             <tbody>
@@ -178,7 +243,7 @@ export function AlertsPage({ alerts, servers, onAcknowledge, onAcknowledgeMany }
                   <td className="px-4 py-3 text-gray-300 font-semibold whitespace-nowrap">
                     {alert.server_name ?? `#${alert.server_id}`}
                   </td>
-                  <td className="px-4 py-3 text-gray-400 max-w-[280px] truncate" title={alert.message}>
+                  <td className="px-4 py-3 text-gray-400 max-w-[260px] truncate" title={alert.message}>
                     {alert.message}
                   </td>
                   <td className="px-4 py-3 text-gray-600 uppercase hidden sm:table-cell">
@@ -188,14 +253,20 @@ export function AlertsPage({ alerts, servers, onAcknowledge, onAcknowledgeMany }
                     {fmtRelativeTime(alert.created_at)}
                   </td>
                   <td className="px-4 py-3 text-right">
-                    {!alert.acknowledged && (
-                      <button
-                        onClick={() => onAcknowledge(alert.id)}
-                        className="text-gray-600 hover:text-cyan-400 border border-transparent hover:border-cyan-800/50 rounded px-2 py-0.5 transition-colors whitespace-nowrap"
-                      >
-                        ack
-                      </button>
-                    )}
+                    <div className="flex items-center justify-end gap-2">
+                      {/* AI summary badge — show for alerts with a summary or predictive alerts */}
+                      {(alertsWithSummary.has(alert.id) || alert.summary_id != null) && (
+                        <AISummaryInline alertId={alert.id} summaries={summaries} />
+                      )}
+                      {!alert.acknowledged && (
+                        <button
+                          onClick={() => onAcknowledge(alert.id)}
+                          className="text-gray-600 hover:text-cyan-400 border border-transparent hover:border-cyan-800/50 rounded px-2 py-0.5 transition-colors whitespace-nowrap"
+                        >
+                          ack
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}

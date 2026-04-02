@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { ServerRow, MetricRow, AlertRow, DockerSnapshot } from '../types';
+import { ServerRow, MetricRow, AlertRow, DockerSnapshot, SummaryRow } from '../types';
 import {
   isOnline, fmtRelativeTime, metricColor, metricTextClass,
   fmtBytesPerSec, fmtUptime, truncateImage,
@@ -14,6 +14,7 @@ interface ServerDetailPageProps {
   metrics:        MetricRow[];
   docker:         DockerSnapshot;
   alerts:         AlertRow[];
+  summaries:      SummaryRow[];
   onBack:         () => void;
   onSelectServer: (id: number) => void;
 }
@@ -186,6 +187,39 @@ function ContainerTable({ containers }: { containers: DockerSnapshot['containers
   );
 }
 
+// ── AI Insights panel ─────────────────────────────────────────────────────────
+
+function InsightsPanel({ summaries }: { summaries: SummaryRow[] }) {
+  if (summaries.length === 0) return null;
+
+  const latest = summaries[0];
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-3">
+        <h2 className="text-[10px] uppercase tracking-widest text-gray-600">Insights</h2>
+        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded border bg-violet-500/10 text-violet-400 border-violet-700/40">
+          AI
+        </span>
+        {summaries.length > 1 && (
+          <span className="text-[10px] text-gray-700 font-mono">{summaries.length} summaries</span>
+        )}
+      </div>
+      <div className="card p-4 space-y-3">
+        <div className="flex items-center justify-between text-[10px] text-gray-600">
+          <span className="font-mono">{latest.model ?? 'AI'}</span>
+          <span>{fmtRelativeTime(latest.created_at)}</span>
+        </div>
+        <p className="text-xs text-gray-300 leading-relaxed whitespace-pre-wrap">{latest.summary}</p>
+        {latest.alert_ids.length > 0 && (
+          <p className="text-[10px] text-gray-700 font-mono">
+            Based on {latest.alert_ids.length} alert{latest.alert_ids.length > 1 ? 's' : ''}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Server info strip ─────────────────────────────────────────────────────────
 
 function ServerInfoStrip({ server }: { server: ServerRow }) {
@@ -215,6 +249,7 @@ export function ServerDetailPage({
   metrics,
   docker,
   alerts,
+  summaries,
   onBack,
   onSelectServer,
 }: ServerDetailPageProps) {
@@ -355,6 +390,9 @@ export function ServerDetailPage({
           />
         </div>
       </div>
+
+      {/* AI Insights */}
+      <InsightsPanel summaries={summaries} />
 
       {/* Containers */}
       <div>
