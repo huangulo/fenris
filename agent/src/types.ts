@@ -24,5 +24,6 @@ export interface Metric {
 
 export interface AgentPayload {
   server_name: string;
+  host_ip?: string;
   metrics: Metric[];
 }
