@@ -144,7 +144,7 @@ export class Summarizer {
     }
 
     const body = {
-      model: this.cfg.model ?? 'grok-3-mini',
+      model: this.cfg.model ?? 'gpt-4o-mini',
       messages: [
         {
           role: 'system',
