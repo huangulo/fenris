@@ -22,6 +22,17 @@ export interface AlertRow {
   metric_type?: string;
   acknowledged: boolean;
   created_at: string;
+  summary_id?: number | null;
+}
+
+export interface SummaryRow {
+  id: number;
+  server_id: number;
+  server_name?: string;
+  alert_ids: number[];
+  summary: string;
+  model: string | null;
+  created_at: string;
 }
 
 export interface ServerRow {
