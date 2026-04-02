@@ -91,6 +91,19 @@ anomaly_detection:
   window_size: 100
   min_samples: 30
 
+# AI Incident Summaries
+# Uses the OpenAI API (or any OpenAI-compatible endpoint).
+# Disabled by default — set enabled: true and provide your API key to activate.
+ai:
+  enabled: false
+  provider: "openai"
+  api_url: "https://api.openai.com/v1/chat/completions"
+  api_key: ""               # Your OpenAI API key (sk-...)
+  model: "gpt-4o-mini"
+  max_calls_per_hour: 10
+  batch_window_ms: 120000   # Wait 2 min to batch alerts before summarising
+  cooldown_per_server_ms: 900000  # 15 min between summaries per server
+
 # Data Retention
 retention:
   metrics_days: 30
