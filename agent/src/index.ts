@@ -1,10 +1,30 @@
 import fetch from 'node-fetch';
+import si from 'systeminformation';
 import { loadConfig } from './config.js';
 import { SystemCollector } from './collectors/system.js';
 import { DockerCollector } from './collectors/docker.js';
 import { Metric, AgentPayload } from './types.js';
 
 const MAX_BUFFER = 100;
+
+// Docker bridge IP range: 172.16.0.0/12 (172.16–31.x.x)
+const DOCKER_IP_RE = /^172\.(1[6-9]|2\d|3[01])\./;
+
+async function getHostIP(): Promise<string> {
+  try {
+    const nics = await si.networkInterfaces('*');
+    const list = Array.isArray(nics) ? nics : [nics];
+    const candidate = list.find(n =>
+      !n.internal &&
+      n.ip4 &&
+      !/^(docker|br-|veth|virbr)/.test(n.iface) &&
+      !DOCKER_IP_RE.test(n.ip4)
+    );
+    return candidate?.ip4 ?? '';
+  } catch {
+    return '';
+  }
+}
 
 // Buffered payloads to flush when server is reachable again
 const buffer: AgentPayload[] = [];
@@ -57,14 +77,15 @@ async function collect(
   systemCollector: SystemCollector,
   dockerCollector: DockerCollector,
   serverName: string,
-  diskPaths: string[]
+  diskPaths: string[],
+  hostIP: string
 ): Promise<AgentPayload> {
   const metrics: Metric[] = await systemCollector.collectAll(diskPaths);
 
   const dockerMetric = await dockerCollector.collectAll();
   if (dockerMetric) metrics.push(dockerMetric);
 
-  return { server_name: serverName, metrics };
+  return { server_name: serverName, host_ip: hostIP, metrics };
 }
 
 async function run(): Promise<void> {
@@ -79,10 +100,15 @@ async function run(): Promise<void> {
     await dockerCollector.init();
   }
 
+  const hostIP = await getHostIP();
+  if (hostIP) {
+    console.log(`[agent] detected host IP: ${hostIP}`);
+  }
+
   const tick = async () => {
     console.log('[agent] collecting metrics…');
     try {
-      const payload = await collect(systemCollector, dockerCollector, config.server_name, config.disk_paths);
+      const payload = await collect(systemCollector, dockerCollector, config.server_name, config.disk_paths, hostIP);
       console.log(`[agent] collected ${payload.metrics.length} metrics, sending…`);
 
       // Try to flush any backlog first
