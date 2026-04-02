@@ -15,13 +15,17 @@
     color: #e2e8f0;
     font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
 
   /* Thin custom scrollbar */
   ::-webkit-scrollbar          { width: 5px; height: 5px; }
   ::-webkit-scrollbar-track    { background: transparent; }
-  ::-webkit-scrollbar-thumb    { background: #1f2937; border-radius: 3px; }
-  ::-webkit-scrollbar-thumb:hover { background: #374151; }
+  ::-webkit-scrollbar-thumb    { background: #1e2a3a; border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #2d3f55; }
+
+  /* Remove default select arrow on Chrome */
+  select { -webkit-appearance: none; appearance: none; }
 }
 
 @layer utilities {
@@ -29,22 +33,47 @@
 
   /* Card surfaces */
   .card {
-    @apply bg-gray-900 border border-gray-800/80 rounded-xl;
+    @apply bg-gray-900 border border-gray-800/70 rounded-xl;
   }
   .card-sm {
-    @apply bg-gray-800/60 border border-gray-700/60 rounded-lg;
+    @apply bg-gray-800/50 border border-gray-700/50 rounded-lg;
   }
 
-  /* Sidebar nav item active glow */
+  /* Sidebar nav item states */
   .nav-active {
-    @apply bg-cyan-500/10 text-cyan-400 border-l-2 border-cyan-500;
+    @apply text-cyan-400 bg-cyan-500/10 border-l-[2px] border-cyan-500;
   }
   .nav-inactive {
-    @apply text-gray-400 hover:text-gray-200 hover:bg-white/5 border-l-2 border-transparent;
+    @apply text-gray-500 hover:text-gray-200 hover:bg-white/5 border-l-[2px] border-transparent transition-colors duration-100;
   }
 
-  /* Recharts tooltip reset */
-  .recharts-default-tooltip {
-    @apply !bg-gray-900 !border !border-gray-700 !rounded-lg !text-xs !font-mono;
+  /* Number counting animation */
+  @keyframes count {
+    from { opacity: 0; transform: translateY(4px); }
+    to   { opacity: 1; transform: translateY(0); }
   }
+  .animate-count { animation: count 0.3s ease-out; }
+
+  /* Value update flash */
+  @keyframes flash-green {
+    0%, 100% { color: inherit; }
+    50%       { color: #10b981; }
+  }
+  .animate-update { animation: flash-green 0.6s ease-out; }
+}
+
+/* Recharts: remove default tooltip shadow, use our card style */
+.recharts-tooltip-wrapper { outline: none !important; }
+.recharts-default-tooltip {
+  background: #111827 !important;
+  border: 1px solid #374151 !important;
+  border-radius: 8px !important;
+  font-family: 'JetBrains Mono', monospace !important;
+  font-size: 11px !important;
+}
+
+/* Selection accent colour */
+::selection {
+  background: rgba(6, 182, 212, 0.25);
+  color: inherit;
 }
