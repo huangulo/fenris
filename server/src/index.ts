@@ -4,13 +4,17 @@ import env from '@fastify/env';
 import { readFileSync } from 'fs';
 import { load } from 'js-yaml';
 import { initDatabase, initializeTables, closeDatabase, query } from './db/client.js';
-import { initServices, healthCheck, receiveMetrics, listServers, getAllMetrics, getServerMetrics, listAlerts, acknowledgeAlert, getConfig, getDockerContainers, getDockerContainerHistory } from './api/routes.js';
+import { initServices, healthCheck, receiveMetrics, listServers, getAllMetrics, getServerMetrics, listAlerts, acknowledgeAlert, getConfig, getDockerContainers, getDockerContainerHistory, getAlertSummary, listSummaries } from './api/routes.js';
+import { Predictor, parseDurationMs } from './engine/predictor.js';
+import { Summarizer } from './engine/summarizer.js';
 import { Config } from './types.js';
 
 const server = Fastify({ logger: true });
 
 let config: Config;
 let retentionInterval: NodeJS.Timeout | null = null;
+let predictor: Predictor | null = null;
+let summarizer: Summarizer | null = null;
 
 async function loadConfig(): Promise<Config> {
   const configPath = process.env.FENRIS_CONFIG || '/app/fenris.yaml';
@@ -66,7 +70,29 @@ async function loadConfig(): Promise<Config> {
         zscore_threshold: 3.5,
         window_size: 100,
         min_samples: 60
-      }
+      },
+      predictions: {
+        enabled: true,
+        interval: '5m',
+        disk_horizon_days: 7,
+        cpu_horizon_hours: 1,
+        memory_horizon_hours: 1,
+        disk_threshold: 85,
+        cpu_threshold: 90,
+        memory_threshold: 90,
+        min_samples: 120,
+        min_confidence: 0.5,
+      },
+      ai: {
+        enabled: false,
+        provider: 'xai',
+        api_url: 'https://api.x.ai/v1/chat/completions',
+        api_key: '',
+        model: 'grok-3-mini',
+        max_calls_per_hour: 10,
+        batch_window_ms: 120_000,
+        cooldown_per_server_ms: 900_000,
+      },
     };
     return config;
   }
@@ -110,7 +136,7 @@ async function start(): Promise<void> {
     initDatabase(config.server);
     await initializeTables();
     
-    // Initialize services
+    // Initialize services (must come before predictor/summarizer which need dispatcher)
     initServices(config);
     
     // API key authentication — only /api/ routes are gated
@@ -166,6 +192,8 @@ async function start(): Promise<void> {
     server.get('/api/v1/metrics', getAllMetrics);
     server.get('/api/v1/servers/:id/metrics', getServerMetrics);
     server.get('/api/v1/alerts', listAlerts);
+    server.get('/api/v1/alerts/:id/summary', getAlertSummary);
+    server.get('/api/v1/summaries', listSummaries);
     server.get('/api/v1/docker/containers', getDockerContainers);
     server.get('/api/v1/docker/containers/:name/metrics', getDockerContainerHistory);
     server.post('/api/v1/alerts/:id/acknowledge', acknowledgeAlert);
@@ -177,9 +205,9 @@ async function start(): Promise<void> {
       process.on(signal as NodeJS.Signals, async () => {
         console.log('Received', signal, ', shutting down gracefully...');
 
-        if (retentionInterval) {
-          clearInterval(retentionInterval);
-        }
+        if (retentionInterval) clearInterval(retentionInterval);
+        predictor?.stop();
+        summarizer?.stop();
 
         await closeDatabase();
         await server.close();
@@ -198,6 +226,32 @@ async function start(): Promise<void> {
 
     // Start data retention job
     await startRetentionJob();
+
+    // Start predictor
+    const predCfg = config.predictions;
+    if (predCfg) {
+      const { getDispatcher } = await import('./api/routes.js');
+      predictor = new Predictor({
+        enabled:              predCfg.enabled ?? true,
+        interval_ms:          parseDurationMs(predCfg.interval ?? '5m', 5 * 60_000),
+        disk_horizon_days:    predCfg.disk_horizon_days    ?? 7,
+        cpu_horizon_hours:    predCfg.cpu_horizon_hours    ?? 1,
+        memory_horizon_hours: predCfg.memory_horizon_hours ?? 1,
+        disk_threshold:       predCfg.disk_threshold       ?? 85,
+        cpu_threshold:        predCfg.cpu_threshold        ?? 90,
+        memory_threshold:     predCfg.memory_threshold     ?? 90,
+        min_samples:          predCfg.min_samples          ?? 120,
+        min_confidence:       predCfg.min_confidence       ?? 0.5,
+      }, getDispatcher());
+      predictor.start();
+    }
+
+    // Start summarizer
+    const aiCfg = config.ai;
+    if (aiCfg) {
+      summarizer = new Summarizer(aiCfg, (s) => { /* summary stored inline */ void s; });
+      summarizer.start();
+    }
     
   } catch (error) {
     console.error('Failed to start server:', error);

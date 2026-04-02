@@ -18,6 +18,10 @@ export function initServices(cfg: Config): void {
   dispatcher = new AlertDispatcher(cfg);
 }
 
+export function getDispatcher(): AlertDispatcher {
+  return dispatcher;
+}
+
 export async function healthCheck(request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> {
   return reply.send({ status: 'healthy', timestamp: new Date().toISOString() });
 }
