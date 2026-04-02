@@ -113,4 +113,26 @@ export interface Config {
     metrics_days: number;
     alerts_days: number;
   };
+  predictions?: {
+    enabled: boolean;
+    interval: string;         // "5m", "1h", etc.
+    disk_horizon_days: number;
+    cpu_horizon_hours: number;
+    memory_horizon_hours: number;
+    disk_threshold: number;
+    cpu_threshold: number;
+    memory_threshold: number;
+    min_samples: number;
+    min_confidence: number;   // R² floor, 0–1
+  };
+  ai?: {
+    enabled: boolean;
+    provider: string;
+    api_url: string;
+    api_key: string;
+    model: string;
+    max_calls_per_hour: number;
+    batch_window_ms: number;   // how long to wait before summarising a batch
+    cooldown_per_server_ms: number;
+  };
 }
