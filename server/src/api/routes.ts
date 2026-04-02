@@ -143,6 +143,7 @@ export async function ingestMetrics(metrics: Metric[]): Promise<{ anomaliesDetec
 
 interface AgentPayload {
   server_name: string;
+  host_ip?: string;
   metrics: Omit<Metric, 'id' | 'server_id'>[];
 }
 
@@ -156,7 +157,7 @@ export async function receiveMetrics(
       return reply.status(401).send({ error: 'unauthorized' });
     }
 
-    const { server_name, metrics: rawMetrics } = request.body;
+    const { server_name, host_ip: payloadHostIP, metrics: rawMetrics } = request.body;
     if (!server_name) {
       return reply.status(400).send({ error: 'server_name is required in payload' });
     }
@@ -164,11 +165,16 @@ export async function receiveMetrics(
       return reply.status(400).send({ error: 'metrics array is required and must not be empty' });
     }
 
-    // Resolve IP from request (X-Forwarded-For → socket)
+    // Resolve IP: X-Forwarded-For → socket remote address
     const forwarded = request.headers['x-forwarded-for'];
-    const ip = (Array.isArray(forwarded) ? forwarded[0] : forwarded?.split(',')[0])?.trim()
-             ?? request.socket.remoteAddress
-             ?? '0.0.0.0';
+    const requestIP = (Array.isArray(forwarded) ? forwarded[0] : forwarded?.split(',')[0])?.trim()
+                   ?? request.socket.remoteAddress
+                   ?? '0.0.0.0';
+
+    // If the request IP is a Docker-internal address (172.16–31.x or 10.x), prefer the
+    // host_ip the agent detected via its own network interfaces.
+    const isDockerIP = /^(172\.(1[6-9]|2\d|3[01])\.|10\.)/.test(requestIP);
+    const ip = (isDockerIP && payloadHostIP) ? payloadHostIP : requestIP;
 
     // Upsert: auto-register on first contact, update heartbeat on reconnect
     const upsertResult = await query(

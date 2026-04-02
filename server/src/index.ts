@@ -140,6 +140,7 @@ async function start(): Promise<void> {
           required: ['server_name', 'metrics'],
           properties: {
             server_name: { type: 'string', minLength: 1, maxLength: 255 },
+            host_ip:     { type: 'string' },
             metrics: {
               type: 'array',
               items: {
