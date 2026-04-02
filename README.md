@@ -1,121 +1,154 @@
-# FENRIS 🐕
+# Fenris
 
-Self-hosted infrastructure intelligence for homelabs and small ops teams.
+**Predictive infrastructure monitoring for homelabs and small teams.**
 
-## Vision
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](#license)
+[![Docker](https://img.shields.io/badge/Docker-required-2496ED?logo=docker&logoColor=white)](#prerequisites)
+[![Node](https://img.shields.io/badge/Node-20%2B-339933?logo=node.js&logoColor=white)](#manual-install)
 
-A predictive monitoring system that learns your infrastructure patterns and alerts **before** things break.
+Fenris is a self-hosted, three-tier monitoring stack: lightweight per-host agents push metrics to a central server, which runs Z-score anomaly detection and dispatches alerts, all surfaced in a dark, information-dense React dashboard.
+
+---
 
 ## Features
 
-- **Pattern Learning**: Learns normal behavior (CPU, RAM, disk, network)
-- **Predictive Alerts**: Detects anomalies using Z-score algorithm
-- **Multi-Server**: Monitor multiple servers from a central dashboard (v0.2+)
-- **Alert Routing**: Discord, Slack, WhatsApp, Email, Webhooks
-- **Knowledge Graph**: Service dependencies and infrastructure visualization
-- **Real-time Dashboard**: Grafana-style metrics and alert history
+- **Agent-based collection** — deploy one small agent per host; zero polling from the server
+- **Z-score anomaly detection** — statistical baseline per metric, fires only on genuine spikes
+- **Docker container monitoring** — per-container CPU, memory, network, state-transition alerts
+- **Multi-channel alerts** — Discord and Slack webhooks, per-severity routing, 15-minute cooldown
+- **Dark React dashboard** — server cards with sparklines, circular gauges, 1-hour history charts
+- **Data retention** — configurable per-metric and per-alert TTL, hourly background cleanup
+- **One-line install** — curl installer handles prerequisites, keys, and Docker Compose in one shot
 
-## Prerequisites
-
-### Required
-- **Docker**: 20.10+ for Docker Compose v2
-- **Docker Compose**: 2.0+ (built into Docker)
-- **Git**: For cloning repository
-- **Discord Webhook**: For alerts (get from Discord server settings)
-
-### Optional (for development)
-- **Node.js**: 22.x LTS (for local development)
-- **PostgreSQL**: 15+ (for local database)
-- **pnpm**: For fast package management
+---
 
 ## Quick Start
 
-### Production (Docker Compose)
-
-```bash
-# Clone repository
-git clone https://github.com/hugolechauve/fenris.git
-cd fenris
-
-# Copy and edit configuration
-cp fenris.yaml.example fenris.yaml
-nano fenris.yaml  # Set your Discord webhook URL
-
-# Set environment variables (optional, for PostgreSQL password)
-export POSTGRES_PASSWORD=your-secure-password
-export DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
-
-# Start all services
-docker-compose up -d
-
-# Check logs
-docker-compose logs -f
-
-# Access dashboard
-open http://localhost:8081
+```sh
+curl -fsSL https://raw.githubusercontent.com/your-org/fenris/main/install.sh | sh
 ```
 
-### Local Development
+The installer will ask whether you want a **server** (full stack) or **agent** (metrics collector only), then handle the rest. Re-running the script is safe — it will update an existing install.
 
-```bash
-# Clone repository
-git clone https://github.com/hugolechauve/fenris.git
-cd fenris
+---
 
-# Install dependencies
-cd server && pnpm install
-cd ../web && pnpm install
+## Manual Install
 
-# Start PostgreSQL (Docker)
-docker-compose up -d postgres
+### Prerequisites
 
-# Configure environment
+- Linux (x86-64 or ARM64)
+- Docker Engine 24+
+- Docker Compose v2 (`docker compose` plugin, not legacy `docker-compose`)
+- Git
+
+### Server (full stack)
+
+```sh
+git clone https://github.com/your-org/fenris.git ~/.fenris
+cd ~/.fenris
+
+# Copy and edit the environment file
 cp .env.example .env
-nano .env  # Set DATABASE_URL and other variables
+$EDITOR .env          # set POSTGRES_PASSWORD, API_KEY, optional webhooks
 
-# Start backend (in server/)
-cd server
-pnpm run dev
+# Build and start
+docker compose up -d --build
 
-# Start frontend (in web/)
-cd ../web
-pnpm run dev
-
-# Access dashboard
-open http://localhost:5173  # Vite dev server
+# Verify
+curl http://localhost:3200/health
 ```
 
-## Configuration
+The dashboard is served by the `web` container on port **5173** by default.
+The API server runs on port **3200**.
 
-Edit `fenris.yaml` to customize:
+### Environment variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `POSTGRES_PASSWORD` | yes | PostgreSQL password (used internally between containers) |
+| `API_KEY` | yes | Shared key agents send as `X-API-Key` |
+| `DISCORD_WEBHOOK_URL` | no | Full Discord webhook URL for alerts |
+| `SLACK_WEBHOOK_URL` | no | Full Slack incoming-webhook URL for alerts |
+| `PORT` | no | Server HTTP port (default `3200`) |
+| `VITE_API_KEY` | no | API key baked into the web bundle for dashboard auth |
+
+---
+
+## Deploying an Agent
+
+Each host you want to monitor runs one agent container (or bare Node process).
+
+### Docker (recommended)
+
+```sh
+git clone https://github.com/your-org/fenris.git ~/.fenris-agent
+cd ~/.fenris-agent
+
+cat > fenris-agent.yaml <<EOF
+server:
+  url: http://YOUR_SERVER_IP:3200
+  api_key: YOUR_API_KEY
+  hostname: $(hostname)
+
+collection:
+  interval: 30s
+  docker: true
+  docker_socket: /var/run/docker.sock
+EOF
+
+docker compose up -d agent
+```
+
+### Bare Node
+
+```sh
+cd agent
+npm install
+npm run build
+FENRIS_CONFIG=/path/to/fenris-agent.yaml node dist/index.js
+```
+
+### Agent configuration (`fenris-agent.yaml`)
+
+| Field | Default | Description |
+|---|---|---|
+| `server.url` | — | HTTP URL of the Fenris server |
+| `server.api_key` | — | API key from server setup |
+| `server.hostname` | system hostname | Name shown in the dashboard |
+| `collection.interval` | `30s` | Metrics push interval |
+| `collection.docker` | `false` | Enable Docker container stats |
+| `collection.docker_socket` | `/var/run/docker.sock` | Docker socket path |
+
+---
+
+## Configuration Reference
+
+Full server config lives in `fenris.yaml` (mounted into the server container at `/app/fenris.yaml`).
 
 ```yaml
-# Server configuration
 server:
   port: 3200
-  database_url: postgresql://fenris:${POSTGRES_PASSWORD:-fenris}@localhost:5432/fenris
+  database_url: postgresql://fenris:PASSWORD@postgres:5432/fenris
 
-# Disk monitoring paths (REQUIRED)
-disk_paths:
-  - path: /
-    name: root
-    warning_threshold: 85
-    critical_threshold: 95
-  - path: /var/lib/docker
-    name: docker-data
-    warning_threshold: 80
-    critical_threshold: 90
-  - path: /var/log
-    name: logs
-    warning_threshold: 85
-    critical_threshold: 95
+monitors:
+  system:
+    enabled: true
+    scrape_interval: 30s
+    metrics: [cpu, memory, disk, network]
+  docker:
+    enabled: false          # set true to collect container stats
+    scrape_interval: 15s
+    include_stopped: false  # include exited containers in snapshots
 
-# Alert thresholds
 alerts:
   discord:
     enabled: true
-    webhook_url: ${DISCORD_WEBHOOK_URL}
+    webhook_url: ${DISCORD_WEBHOOK_URL}   # resolved from environment
     severity_levels: [info, warning, critical]
+  slack:
+    enabled: false
+    webhook_url: ${SLACK_WEBHOOK_URL}
+    severity_levels: [warning, critical]
   thresholds:
     cpu:
       warning: 75
@@ -126,197 +159,175 @@ alerts:
     disk:
       warning: 85
       critical: 95
+    network:
+      anomaly_threshold: 3.0   # Z-score; network uses anomaly detection only
+
+disk_paths:
+  - path: /
+    name: root
+    warning_threshold: 85
+    critical_threshold: 95
+  - path: /var/lib/docker
+    name: docker-data
+    warning_threshold: 80
+    critical_threshold: 90
+
+anomaly_detection:
+  enabled: true
+  algorithm: zscore
+  zscore_threshold: 3.0    # standard deviations above the rolling mean
+  window_size: 100         # number of data points in the sliding window
+  min_samples: 60          # samples needed before first alert (~30 min at 30s interval)
+
+retention:
+  metrics_days: 30         # delete metric rows older than N days
+  alerts_days: 90          # delete alert rows older than N days
+
+logging:
+  level: info
+  file: /app/logs/fenris.log
+  max_size: 100MB
+  max_files: 5
 ```
 
-### Environment Variables
+---
 
-| Variable | Description | Default |
-|----------|-------------|----------|
-| PORT | Server port | 3200 |
-| POSTGRES_PASSWORD | PostgreSQL database password | fenris |
-| DISCORD_WEBHOOK_URL | Discord webhook for alerts | - |
-| NODE_ENV | Environment mode | production |
+## API Reference
+
+All `/api/` routes require the header `X-API-Key: <key>` unless noted otherwise.
+
+### Health
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `GET` | `/health` | none | Liveness check. Returns `{ status: "healthy", timestamp }`. |
+
+### Metrics ingestion
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `POST` | `/api/v1/metrics` | none* | Ingest a metric batch from an agent. Auto-registers unknown agents by `(api_key, server_name)`. |
+
+*`POST /api/v1/metrics` authenticates via the `X-API-Key` header inline — it does not go through the shared auth hook so agents can self-register.
+
+**Request body:**
+```json
+{
+  "server_name": "my-host",
+  "metrics": [
+    {
+      "metric_type": "cpu",
+      "value": { "cpu": { "usage": 42.1 } },
+      "timestamp": "2026-04-01T12:00:00.000Z"
+    }
+  ]
+}
+```
+
+**Supported `metric_type` values:** `cpu`, `memory`, `disk`, `network`, `docker`
+
+### Servers
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `GET` | `/api/v1/servers` | key | List all registered servers with `id`, `name`, `ip_address`, `last_heartbeat`. |
+
+### Metrics query
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `GET` | `/api/v1/metrics` | key | Recent metrics across all servers. Query: `limit` (default 100). |
+| `GET` | `/api/v1/servers/:id/metrics` | key | Metrics for one server. Query: `limit`, `metric_type`. |
+
+### Alerts
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `GET` | `/api/v1/alerts` | key | List alerts. Query: `limit`, `server_id`, `severity`, `acknowledged` (`true`/`false`). |
+| `POST` | `/api/v1/alerts/:id/acknowledge` | key | Acknowledge a single alert by ID. |
+
+### Docker
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `GET` | `/api/v1/docker/containers` | key | Latest container snapshot. Query: `server_id`. |
+| `GET` | `/api/v1/docker/containers/:name/metrics` | key | Historical stats for one container. Query: `server_id`, `limit`. |
+
+### Config
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `GET` | `/api/v1/config` | none | Returns safe config subset (thresholds, anomaly settings). Passwords and webhook URLs are stripped. |
+
+---
 
 ## Architecture
 
 ```
-Fenris Server (Central Brain)         ← runs once, anywhere
-├── HTTP API + anomaly detection
-├── PostgreSQL storage
-└── Web Dashboard
-     ↑
-     ├── Fenris Agent (host-1)         ← runs on every monitored host
-     ├── Fenris Agent (host-2)
-     └── Fenris Agent (host-N)
+┌──────────────────────────────────────────────────────────────────┐
+│                          Your network                            │
+│                                                                  │
+│  ┌──────────────┐   POST /api/v1/metrics    ┌─────────────────┐ │
+│  │  Agent host  │ ───────────────────────►  │                 │ │
+│  │  (Node.js)   │   X-API-Key: <key>        │  Fenris Server  │ │
+│  │              │                           │   (Fastify)     │ │
+│  │ • CPU/mem    │                           │                 │ │
+│  │ • disk/net   │                           │ • Z-score       │ │
+│  │ • Docker     │                           │   anomaly det.  │ │
+│  └──────────────┘                           │ • Threshold     │ │
+│                                             │   checks        │ │
+│  ┌──────────────┐                           │ • Alert         │ │
+│  │  Agent host  │ ───────────────────────►  │   dispatch      │ │
+│  └──────────────┘                           │ • REST API      │ │
+│                                             └───────┬─────────┘ │
+│                                                     │           │
+│  ┌─────────────────┐    REST + X-API-Key    ┌───────▼─────────┐ │
+│  │  Browser        │ ◄────────────────────► │  Web Dashboard  │ │
+│  │  (React SPA)    │                        │  (Vite + Nginx) │ │
+│  └─────────────────┘                        └─────────────────┘ │
+│                                                                  │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │                    PostgreSQL 15                          │   │
+│  │   tables: servers · metrics (JSONB+GIN) · alerts         │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                                                                  │
+│  Alerts ──► Discord webhook                                      │
+│         ──► Slack webhook                                        │
+└──────────────────────────────────────────────────────────────────┘
 ```
-
-### Multi-Server Agent Architecture
-
-**Fenris Server** receives metrics, runs anomaly detection, fires alerts, and serves the dashboard. It does **not** collect its own metrics — deploy an agent on the server host too if you want to monitor it.
-
-**Fenris Agent** is a lightweight process that collects system and Docker metrics every 30 s and POSTs them to the central server. It buffers up to 100 snapshots in memory when the server is unreachable and flushes them automatically when the connection resumes.
-
-#### Deploying the agent on a remote host
-
-```bash
-# On the remote host — clone the repo (or copy just the agent/ directory)
-git clone https://github.com/hugolechauve/fenris.git fenris-agent
-cd fenris-agent/agent
-
-# Install dependencies and build
-pnpm install
-pnpm run build
-
-# Create config
-cp ../fenris-agent.yaml.example fenris-agent.yaml
-nano fenris-agent.yaml   # set server_url, api_key, server_name
-
-# Run
-node dist/index.js
-```
-
-Or run it as a Docker container:
-
-```bash
-cd fenris-agent/agent
-docker build -t fenris-agent .
-
-docker run -d \
-  --name fenris-agent \
-  --restart unless-stopped \
-  -v /var/run/docker.sock:/var/run/docker.sock:ro \
-  -e FENRIS_SERVER_URL=http://your-fenris-server:3200 \
-  -e FENRIS_API_KEY=your-unique-agent-key \
-  -e FENRIS_SERVER_NAME=my-remote-host \
-  fenris-agent
-```
-
-The agent auto-registers on first contact. No pre-configuration needed on the server — just start the agent with a unique `api_key` and it will appear in the dashboard.
-
-#### Agent configuration (`fenris-agent.yaml`)
-
-See `fenris-agent.yaml.example` for all options. Key fields:
-
-| Field | Default | Description |
-|-------|---------|-------------|
-| `server_url` | `http://localhost:3200` | Central Fenris API URL |
-| `api_key` | *(required)* | Unique secret per agent |
-| `server_name` | hostname | Human label shown in the dashboard |
-| `collect_interval` | `30s` | Collection frequency (`30s`, `1m`, `5m`) |
-| `docker_enabled` | `true` | Enable Docker container monitoring |
-| `disk_paths` | `[/]` | Filesystem mount points to monitor |
-
-All fields can also be set via environment variables (`FENRIS_SERVER_URL`, `FENRIS_API_KEY`, etc.).
-
-## Roadmap
-
-### v0.2 (Multi-Server) — Current
-- ✅ Core monitoring engine
-- ✅ System metrics (CPU, RAM, disk, network)
-- ✅ Docker container monitoring
-- ✅ Z-score anomaly detection
-- ✅ Discord / Slack / Email alert channels
-- ✅ Remote agent with auto-registration
-- ✅ Per-server dashboard with server selector
-
-### v1.0 (Full Release) - 4 weeks
-- Pattern learning
-- Predictive alerts
-- All alert integrations (Slack, WhatsApp, Email)
-- Knowledge graph MVP
-
-### v1.1+ (Enhancements)
-- ML models (more than Z-score)
-- Mobile app
-- Advanced dashboards
-- SSO integration
-
-## Troubleshooting
-
-### Docker Compose won't start
-```bash
-# Check logs
-docker-compose logs
-
-# Verify ports are available
-ss -tlnp | grep -E '3200|5432|8081'
-
-# Check disk space
-df -h
-```
-
-### Database connection errors
-```bash
-# Verify PostgreSQL is healthy
-docker-compose ps postgres
-
-# Check database logs
-docker-compose logs postgres
-
-# Test connection from server container
-docker-compose exec server psql ${DATABASE_URL} -c 'SELECT 1'
-```
-
-### Alerts not sending to Discord
-```bash
-# Test webhook URL
-curl -X POST $DISCORD_WEBHOOK_URL \
-  -H 'Content-Type: application/json' \
-  -d '{"content":"Fenris webhook test"}'
-
-# Check server logs
-docker-compose logs -f server | grep -i 'discord'
-```
-
-### Health checks failing
-```bash
-# Check health endpoint
-curl http://localhost:3200/health
-
-# Check health check configuration
-docker inspect fenris-server | jq '.[0].State.Health'
-```
-
-## Contributing
-
-```bash
-# Fork repository
-git clone https://github.com/YOUR_USERNAME/fenris.git
-cd fenris
-
-# Create feature branch
-git checkout -b feature/your-feature
-
-# Install dependencies
-pnpm install
-
-# Run tests
-pnpm test
-
-# Run linter
-pnpm lint
-
-# Commit changes
-git commit -am 'Add your feature'
-
-# Push to fork
-git push origin feature/your-feature
-
-# Open pull request
-```
-
-Pull requests welcome! See `CONTRIBUTING.md` for guidelines.
-
-## License
-
-MIT License - Free for everyone, commercial friendly.
-
-## Support
-
-- **Documentation**: https://docs.fenris.sh
-- **Issues**: https://github.com/hugolechauve/fenris/issues
-- **Discussions**: https://github.com/hugolechauve/fenris/discussions
 
 ---
 
-Built with 🐕 by [Hugo Le Chauve](https://github.com/hugolechauve)
+## Roadmap
+
+- [ ] Email alert channel (SMTP)
+- [ ] Per-server alert threshold overrides
+- [ ] Alert history chart in dashboard
+- [ ] PagerDuty / Opsgenie integration
+- [ ] Multi-user auth (currently single shared API key)
+- [ ] Prometheus `/metrics` scrape endpoint
+- [ ] ARM64 Docker image in CI
+- [ ] Automated test suite (Jest for anomaly engine, Playwright for dashboard)
+
+---
+
+## Contributing
+
+1. Fork and create a feature branch
+2. `cd server && npm install && npm run build` — TypeScript must compile cleanly
+3. `cd web && npm install && npm run build` — Vite build must complete without errors
+4. Open a pull request with a clear description of the change
+
+---
+
+## License
+
+MIT License
+
+Copyright (c) 2026 Fenris contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
