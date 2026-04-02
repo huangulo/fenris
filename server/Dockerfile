@@ -25,9 +25,10 @@ USER fenris
 # Expose port
 EXPOSE 3200
 
-# Health check
+# Health check — use node fetch with explicit IPv4 address; wget resolves
+# 'localhost' to ::1 (IPv6) in Alpine but the server only listens on IPv4.
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
-  CMD wget --spider --quiet --tries=1 --timeout=5 http://localhost:3200/health || exit 1
+  CMD node -e "fetch('http://127.0.0.1:3200/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
 
 # Start server
 CMD ["node", "dist/index.js"]
