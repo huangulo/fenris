@@ -9,7 +9,31 @@
       "Bash(git commit:*)",
       "Bash(docker --version)",
       "Bash(docker compose:*)",
-      "Bash(docker exec:*)"
+      "Bash(docker exec:*)",
+      "Bash(pnpm --version)",
+      "Bash(node -e \"const si = require\\(''/root/workspace/fenris/server/node_modules/systeminformation''\\); si.currentLoad\\(\\).then\\(d => { console.log\\(''currentLoad keys:'', Object.keys\\(d\\)\\); console.log\\(''currentLoad value:'', d.currentLoad\\); console.log\\(''avgLoad:'', d.avgLoad\\); console.log\\(''avgLoad1:'', d.avgLoad1\\); console.log\\(''avgLoad5:'', d.avgLoad5\\); }\\).catch\\(e => console.error\\(e\\)\\);\")",
+      "Bash(node --input-type=module:*)",
+      "Bash(pnpm install:*)",
+      "Bash(docker ps:*)",
+      "Bash(docker volume:*)",
+      "Bash(POSTGRES_PASSWORD=fenris docker compose up -d)",
+      "Bash(curl -sv -X POST \"http://localhost:8081/api/v1/alerts/1/acknowledge\" -H \"X-API-Key: local-default-key\" -H \"Content-Type: application/json\")",
+      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\\\\n\" http://localhost:8081/)",
+      "Bash(__NEW_LINE_46efb1633520ce89__ echo:*)",
+      "Bash(curl -s -w \"\\\\nHTTP %{http_code}\" -X POST \"http://localhost:8081/api/v1/alerts/1/acknowledge\" -H \"X-API-Key: local-default-key\")",
+      "Bash(echo \"POSTGRES_PASSWORD=$POSTGRES_PASSWORD:-<unset>\")",
+      "Bash(pnpm add:*)",
+      "Bash(pnpm typecheck:*)",
+      "Bash(npm run:*)",
+      "Bash(npm install:*)",
+      "Bash(curl -s -H \"X-API-Key: local-default-key\" \"http://localhost:3200/api/v1/docker/containers/n8n/metrics?limit=3\")",
+      "Bash(python3 -c \"import sys,json; rows=json.load\\(sys.stdin\\); [print\\(f''''{r[\"\"timestamp\"\"]}: cpu={r[\"\"stats\"\"][\"\"cpu_percent\"\"]}% mem={r[\"\"stats\"\"][\"\"memory_mb\"\"]}MB''''\\) for r in rows]\")",
+      "Bash(curl -s http://localhost:3200/api/v1/config)",
+      "Bash(python3 -m json.tool)",
+      "Bash(pnpm run:*)",
+      "Bash(npx tsc:*)",
+      "Bash(wc -l /root/workspace/fenris/server/src/**/*.ts /root/workspace/fenris/agent/src/**/*.ts /root/workspace/fenris/web/src/**/*.tsx)",
+      "Bash(grep -n \"process.env\\\\|os.Getenv\\\\|\\\\.env\" /root/workspace/fenris/server/src/index.ts /root/workspace/fenris/agent/src/*.ts)"
     ]
   }
 }
