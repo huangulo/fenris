@@ -4,7 +4,7 @@ import env from '@fastify/env';
 import { readFileSync } from 'fs';
 import { load } from 'js-yaml';
 import { initDatabase, initializeTables, closeDatabase, query } from './db/client.js';
-import { initServices, healthCheck, receiveMetrics, listServers, getAllMetrics, getServerMetrics, listAlerts, acknowledgeAlert, getConfig, getDockerContainers, getDockerContainerHistory, getAlertSummary, listSummaries } from './api/routes.js';
+import { initServices, healthCheck, receiveMetrics, listServers, getAllMetrics, getServerMetrics, listAlerts, acknowledgeAlert, getConfig, getDockerContainers, getDockerContainerHistory, getAlertSummary, listSummaries, sendTestAlert } from './api/routes.js';
 import { Predictor, parseDurationMs } from './engine/predictor.js';
 import { Summarizer } from './engine/summarizer.js';
 import { Config } from './types.js';
@@ -197,6 +197,7 @@ async function start(): Promise<void> {
     server.get('/api/v1/docker/containers', getDockerContainers);
     server.get('/api/v1/docker/containers/:name/metrics', getDockerContainerHistory);
     server.post('/api/v1/alerts/:id/acknowledge', acknowledgeAlert);
+    server.post('/api/v1/test-alert', sendTestAlert);
     server.get('/api/v1/config', getConfig);
     
     // Graceful shutdown

@@ -1,7 +1,7 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { query } from '../db/client.js';
 import { AnomalyDetector } from '../engine/anomaly.js';
-import { AlertDispatcher } from '../alerts/dispatcher.js';
+import { AlertDispatcher, TestResult } from '../alerts/dispatcher.js';
 import { Summarizer } from '../engine/summarizer.js';
 import { Metric, Alert, ContainerStats, Config } from '../types.js';
 
@@ -411,6 +411,24 @@ export async function acknowledgeAlert(request: FastifyRequest<{ Params: { id: s
   } catch (error) {
     console.error('Error acknowledging alert:', error);
     return reply.status(500).send({ error: 'Failed to acknowledge alert' });
+  }
+}
+
+interface TestAlertBody {
+  channels?: string[];
+}
+
+export async function sendTestAlert(
+  request: FastifyRequest<{ Body: TestAlertBody }>,
+  reply: FastifyReply
+): Promise<FastifyReply> {
+  try {
+    const requested = Array.isArray(request.body?.channels) ? request.body.channels : undefined;
+    const result: TestResult = await dispatcher.dispatchTest(requested);
+    return reply.send(result);
+  } catch (error) {
+    console.error('Error sending test alert:', error);
+    return reply.status(500).send({ error: 'Failed to send test alert' });
   }
 }
 
