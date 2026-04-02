@@ -72,7 +72,7 @@ anomaly_detection:
   algorithm: zscore
   zscore_threshold: 3.0
   window_size: 100  # Number of data points for baseline
-  min_samples: 30  # Minimum samples before triggering alerts
+  min_samples: 60  # Minimum samples before triggering alerts (~30 min of data at 30s)
 
 # Data Retention
 retention:
