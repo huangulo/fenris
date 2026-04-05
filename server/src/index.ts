@@ -4,7 +4,7 @@ import env from '@fastify/env';
 import { readFileSync } from 'fs';
 import { load } from 'js-yaml';
 import { initDatabase, initializeTables, closeDatabase, query } from './db/client.js';
-import { initServices, healthCheck, receiveMetrics, listServers, getAllMetrics, getServerMetrics, listAlerts, acknowledgeAlert, getConfig, getDockerContainers, getDockerContainerHistory, getAlertSummary, listSummaries, sendTestAlert, getStatus, listMonitors, createMonitor, updateMonitor, deleteMonitor, getMonitorChecks, testMonitorNow, setUptimeMonitor } from './api/routes.js';
+import { initServices, healthCheck, receiveMetrics, listServers, getAllMetrics, getServerMetrics, listAlerts, acknowledgeAlert, getConfig, getDockerContainers, getDockerContainerHistory, getAlertSummary, listSummaries, sendTestAlert, getStatus, getServerStatus, listMonitors, createMonitor, updateMonitor, deleteMonitor, getMonitorChecks, testMonitorNow, setUptimeMonitor } from './api/routes.js';
 import { UptimeMonitor } from './monitors/uptime.js';
 import { Predictor, parseDurationMs } from './engine/predictor.js';
 import { Summarizer } from './engine/summarizer.js';
@@ -208,6 +208,7 @@ async function start(): Promise<void> {
     server.post('/api/v1/test-alert', sendTestAlert);
     server.get('/api/v1/config', getConfig);
     server.get('/api/v1/status', getStatus);
+    server.get('/api/v1/servers/:id/status', getServerStatus);
 
     server.get('/api/v1/monitors', listMonitors);
     server.post('/api/v1/monitors', createMonitor);
