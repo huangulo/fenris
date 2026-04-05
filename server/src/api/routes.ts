@@ -606,6 +606,87 @@ export async function getStatus(_request: FastifyRequest, reply: FastifyReply): 
   }
 }
 
+// ── Per-server status widget ──────────────────────────────────────────────────
+
+export async function getServerStatus(
+  request: FastifyRequest<{ Params: { id: string } }>,
+  reply: FastifyReply
+): Promise<FastifyReply> {
+  try {
+    const serverId = parseInt(request.params.id);
+    if (isNaN(serverId)) return reply.status(400).send({ error: 'Invalid server id' });
+
+    const [serverRes, cpuRes, memRes, diskRes, dockerRes, alertsRes] = await Promise.all([
+      query('SELECT name, last_heartbeat, created_at FROM servers WHERE id = $1', [serverId]),
+      query(
+        `SELECT value FROM metrics WHERE server_id = $1 AND metric_type = 'cpu'
+         ORDER BY timestamp DESC LIMIT 1`,
+        [serverId]
+      ),
+      query(
+        `SELECT value FROM metrics WHERE server_id = $1 AND metric_type = 'memory'
+         ORDER BY timestamp DESC LIMIT 1`,
+        [serverId]
+      ),
+      query(
+        `SELECT value FROM metrics WHERE server_id = $1 AND metric_type = 'disk'
+         ORDER BY timestamp DESC LIMIT 1`,
+        [serverId]
+      ),
+      query(
+        `SELECT value->'docker' AS containers FROM metrics
+         WHERE server_id = $1 AND metric_type = 'docker'
+         ORDER BY timestamp DESC LIMIT 1`,
+        [serverId]
+      ),
+      query(
+        `SELECT COUNT(*) AS total FROM alerts
+         WHERE server_id = $1 AND acknowledged = FALSE`,
+        [serverId]
+      ),
+    ]);
+
+    if (serverRes.rows.length === 0) {
+      return reply.status(404).send({ error: 'Server not found' });
+    }
+
+    const server = serverRes.rows[0];
+    const lastHeartbeat: Date | null = server.last_heartbeat ? new Date(server.last_heartbeat) : null;
+    const isOnline = lastHeartbeat !== null && (Date.now() - lastHeartbeat.getTime()) < 90_000;
+
+    const cpu    = Math.round(cpuRes.rows[0]?.value?.cpu?.usage_percent ?? 0);
+    const memory = Math.round(memRes.rows[0]?.value?.memory?.used_percent ?? 0);
+    const disk   = Math.round(diskRes.rows[0]?.value?.disk?.used_percent ?? 0);
+
+    const containers: Array<{ state: string }> = dockerRes.rows[0]?.containers ?? [];
+    const containersRunning = containers.filter(c => c.state === 'running').length;
+    const containersTotal   = containers.length;
+
+    const activeAlerts = parseInt(alertsRes.rows[0]?.total ?? '0');
+
+    // Uptime string from server created_at
+    const uptimeMs = lastHeartbeat ? lastHeartbeat.getTime() - new Date(server.created_at).getTime() : 0;
+    const uptimeDays  = Math.floor(uptimeMs / (86_400_000));
+    const uptimeHours = Math.floor((uptimeMs % 86_400_000) / 3_600_000);
+    const uptime = uptimeDays > 0 ? `${uptimeDays}d ${uptimeHours}h` : `${uptimeHours}h`;
+
+    return reply.send({
+      name:               server.name,
+      status:             isOnline ? 'online' : 'offline',
+      cpu,
+      memory,
+      disk,
+      containers_running: containersRunning,
+      containers_total:   containersTotal,
+      active_alerts:      activeAlerts,
+      uptime,
+    });
+  } catch (error) {
+    console.error('Error building server status:', error);
+    return reply.status(500).send({ error: 'Failed to build server status' });
+  }
+}
+
 // ── Uptime Monitor routes ─────────────────────────────────────────────────────
 
 const MONITOR_UPTIME_SQL = `
