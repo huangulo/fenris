@@ -1,5 +1,0 @@
-server_url: "http://server:3200"
-api_key: "76e098d18a7bece71f8252380fb5c09e4243fd6aab6826c898c82bc4ef090d82"
-server_name: "Racknerd Dallas"
-collect_interval: "30s"
-docker_enabled: true
