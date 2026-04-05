@@ -108,6 +108,14 @@ export interface Config {
     zscore_threshold: number;
     window_size: number;
     min_samples: number;
+    /** Minimum absolute value below which Z-score detection is skipped entirely. */
+    floors?: {
+      cpu:           number;  // default 50
+      memory:        number;  // default 60
+      disk:          number;  // default 70
+      docker_cpu:    number;  // default 30
+      docker_memory: number;  // default 40
+    };
   };
   retention?: {
     metrics_days: number;
