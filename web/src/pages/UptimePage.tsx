@@ -281,7 +281,7 @@ function MonitorDetail({
   onBack: () => void;
   onTest: () => void;
 }) {
-  const rtValues = useMemo(() => [...checks].reverse().map(c => c.response_time_ms ?? 0), [checks]);
+  const rtValues = useMemo(() => [...checks].reverse().map(c => Number(c.response_time_ms ?? 0)), [checks]);
   const rtTimestamps = useMemo(() => [...checks].reverse().map(c => c.checked_at), [checks]);
 
   const isSSL = monitor.url.startsWith('https://');
@@ -396,6 +396,27 @@ function MonitorDetail({
   );
 }
 
+// ── Data normalisers (PostgreSQL NUMERIC → JS number) ─────────────────────────
+
+function normalizeMonitor(m: any): MonitorRow {
+  return {
+    ...m,
+    uptime_24h:            m.uptime_24h            != null ? parseFloat(m.uptime_24h)        : null,
+    uptime_7d:             m.uptime_7d             != null ? parseFloat(m.uptime_7d)         : null,
+    uptime_30d:            m.uptime_30d            != null ? parseFloat(m.uptime_30d)        : null,
+    last_response_time_ms: m.last_response_time_ms != null ? Number(m.last_response_time_ms) : null,
+    last_status_code:      m.last_status_code      != null ? Number(m.last_status_code)      : null,
+  };
+}
+
+function normalizeCheck(c: any): MonitorCheck {
+  return {
+    ...c,
+    response_time_ms: c.response_time_ms != null ? Number(c.response_time_ms) : null,
+    status_code:      c.status_code      != null ? Number(c.status_code)      : null,
+  };
+}
+
 // ── UptimePage ────────────────────────────────────────────────────────────────
 
 export function UptimePage() {
@@ -410,7 +431,7 @@ export function UptimePage() {
   const fetchMonitors = useCallback(async () => {
     try {
       const res = await apiFetch('/api/v1/monitors');
-      if (res.ok) setMonitors(await res.json());
+      if (res.ok) setMonitors((await res.json()).map(normalizeMonitor));
     } catch { /* silent */ }
     finally { setLoading(false); }
   }, []);
@@ -418,7 +439,7 @@ export function UptimePage() {
   const fetchChecks = useCallback(async (id: number) => {
     try {
       const res = await apiFetch(`/api/v1/monitors/${id}/checks?limit=100`);
-      if (res.ok) setChecks(await res.json());
+      if (res.ok) setChecks((await res.json()).map(normalizeCheck));
     } catch { /* silent */ }
   }, []);
 
