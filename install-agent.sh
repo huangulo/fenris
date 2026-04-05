@@ -153,21 +153,6 @@ services:
     container_name: fenris-agent
     restart: unless-stopped
     volumes:
-      - ./fenris-agent.yaml:/app/fenris-agent.yaml:ro${COMPOSE_SOCKET_LINE:+
-$COMPOSE_SOCKET_LINE}
-${COMPOSE_GID_LINE:+$COMPOSE_GID_LINE
-}COMPOSE
-
-# Re-write cleanly (heredoc with variable expansion can leave blank lines)
-cat > "$INSTALL_DIR/docker-compose.yml" <<COMPOSE
-services:
-  agent:
-    build:
-      context: ./src/agent
-      dockerfile: Dockerfile
-    container_name: fenris-agent
-    restart: unless-stopped
-    volumes:
       - ./fenris-agent.yaml:/app/fenris-agent.yaml:ro
 COMPOSE
 
