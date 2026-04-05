@@ -33,7 +33,14 @@
       "Bash(pnpm run:*)",
       "Bash(npx tsc:*)",
       "Bash(wc -l /root/workspace/fenris/server/src/**/*.ts /root/workspace/fenris/agent/src/**/*.ts /root/workspace/fenris/web/src/**/*.tsx)",
-      "Bash(grep -n \"process.env\\\\|os.Getenv\\\\|\\\\.env\" /root/workspace/fenris/server/src/index.ts /root/workspace/fenris/agent/src/*.ts)"
+      "Bash(grep -n \"process.env\\\\|os.Getenv\\\\|\\\\.env\" /root/workspace/fenris/server/src/index.ts /root/workspace/fenris/agent/src/*.ts)",
+      "Bash(echo \"exit: $?\")",
+      "Bash(chmod +x /root/workspace/fenris/install-agent.sh)",
+      "Bash(bash -n /root/workspace/fenris/install-agent.sh)",
+      "Bash(curl:*)",
+      "Bash(git:*)",
+      "Bash(npx tsup:*)",
+      "Bash(./node_modules/.bin/tsup)"
     ]
   }
 }
