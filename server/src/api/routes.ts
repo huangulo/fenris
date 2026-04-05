@@ -344,12 +344,22 @@ export async function getDockerContainers(request: FastifyRequest, reply: Fastif
         [serverId]
       );
     } else {
+      // One latest snapshot per server, then merge all container arrays
       result = await query(
-        "SELECT value->'docker' AS containers, timestamp FROM metrics WHERE metric_type = 'docker' ORDER BY timestamp DESC LIMIT 1"
+        `SELECT DISTINCT ON (server_id) value->'docker' AS containers, timestamp
+         FROM metrics WHERE metric_type = 'docker'
+         ORDER BY server_id, timestamp DESC`
       );
     }
     if (result.rows.length === 0) {
       return reply.send({ containers: [], timestamp: null });
+    }
+    if (!serverIdParam) {
+      // Merge containers from all servers into a single flat array
+      const allContainers = result.rows.flatMap((r: any) => r.containers ?? []);
+      const latestTs = result.rows.reduce((max: any, r: any) =>
+        r.timestamp > max ? r.timestamp : max, result.rows[0].timestamp);
+      return reply.send({ containers: allContainers, timestamp: latestTs });
     }
     return reply.send({ containers: result.rows[0].containers ?? [], timestamp: result.rows[0].timestamp });
   } catch (error) {
@@ -546,7 +556,9 @@ export async function getStatus(_request: FastifyRequest, reply: FastifyReply): 
   try {
     const [serversRes, dockerRes, monitorsRes, alertsRes] = await Promise.all([
       query('SELECT COUNT(*) AS total, COUNT(last_heartbeat) FILTER (WHERE last_heartbeat > NOW() - INTERVAL \'90 seconds\') AS online FROM servers'),
-      query("SELECT value->'docker' AS containers FROM metrics WHERE metric_type = 'docker' ORDER BY timestamp DESC LIMIT 50"),
+      query(`SELECT DISTINCT ON (server_id) value->'docker' AS containers
+             FROM metrics WHERE metric_type = 'docker'
+             ORDER BY server_id, timestamp DESC`),
       query('SELECT is_up FROM (SELECT DISTINCT ON (monitor_id) is_up FROM monitor_checks ORDER BY monitor_id, checked_at DESC) sub'),
       query('SELECT COUNT(*) AS total FROM alerts WHERE acknowledged = FALSE'),
     ]);
