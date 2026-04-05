@@ -46,3 +46,6 @@ coverage/
 tmp/
 temp/
 agent-local/
+.claude/
+agent-local/
+fenris.yaml
