@@ -28,7 +28,7 @@ export function HistoryChart({
   const c = color ?? (latestPct !== undefined ? metricColor(latestPct) : '#06b6d4');
 
   const data: Pt[] = useMemo(
-    () => values.map((v, i) => ({ v, t: timestamps?.[i] })),
+    () => values.map((v, i) => ({ v: typeof v === 'number' ? v : Number(v) || 0, t: timestamps?.[i] })),
     [values, timestamps],
   );
 
