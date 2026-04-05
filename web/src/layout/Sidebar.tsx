@@ -36,6 +36,12 @@ const IconBell = () => (
   </svg>
 );
 
+const IconHeartbeat = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+  </svg>
+);
+
 const IconSettings = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
     <circle cx="12" cy="12" r="3"/>
@@ -73,6 +79,7 @@ export function Sidebar({ view, onNavigate, activeAlerts, collapsed, onToggleCol
     { id: 'overview',    label: 'Overview',    icon: <IconGrid /> },
     { id: 'server',      label: 'Servers',     icon: <IconServer /> },
     { id: 'containers',  label: 'Containers',  icon: <IconCube /> },
+    { id: 'uptime',      label: 'Uptime',      icon: <IconHeartbeat /> },
     { id: 'alerts',      label: 'Alerts',      icon: <IconBell />, badge: activeAlerts },
     { id: 'settings',    label: 'Settings',    icon: <IconSettings /> },
   ];

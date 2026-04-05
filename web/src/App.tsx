@@ -8,6 +8,7 @@ import { ServerDetailPage } from './pages/ServerDetailPage';
 import { AlertsPage } from './pages/AlertsPage';
 import { ContainersPage } from './pages/ContainersPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { UptimePage } from './pages/UptimePage';
 
 const REFRESH_MS = 30_000;
 
@@ -225,6 +226,8 @@ export default function App() {
             onSelectServer={setSelectedServerId}
           />
         );
+      case 'uptime':
+        return <UptimePage />;
       case 'settings':
         return <SettingsPage config={serverConfig} />;
       default:
