@@ -71,7 +71,8 @@ async function loadConfig(): Promise<Config> {
         algorithm: 'zscore',
         zscore_threshold: 3.5,
         window_size: 100,
-        min_samples: 60
+        min_samples: 60,
+        floors: { cpu: 50, memory: 60, disk: 70, docker_cpu: 30, docker_memory: 40 },
       },
       predictions: {
         enabled: true,

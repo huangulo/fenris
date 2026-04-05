@@ -87,9 +87,19 @@ alerts:
 anomaly_detection:
   enabled: true
   algorithm: zscore
-  zscore_threshold: 3.0
+  zscore_threshold: 3.5
   window_size: 100
-  min_samples: 30
+  min_samples: 60
+  # Minimum absolute value floors — Z-score detection is skipped entirely
+  # when the current value is AT OR BELOW these levels. Prevents noise alerts
+  # for statistically unusual but operationally meaningless low values.
+  # Network metrics are always skipped regardless of these settings.
+  floors:
+    cpu:           50   # ignore CPU anomalies at or below 50%
+    memory:        60   # ignore memory anomalies at or below 60%
+    disk:          70   # ignore disk anomalies at or below 70%
+    docker_cpu:    30   # ignore container CPU anomalies at or below 30%
+    docker_memory: 40   # ignore container memory anomalies at or below 40%
 
 # AI Incident Summaries
 # Uses the OpenAI API (or any OpenAI-compatible endpoint).
