@@ -1,4 +1,4 @@
-export type View = 'overview' | 'server' | 'alerts' | 'containers' | 'settings';
+export type View = 'overview' | 'server' | 'alerts' | 'containers' | 'uptime' | 'settings';
 
 export interface MetricRow {
   id: number;
@@ -64,6 +64,40 @@ export interface ServerSparklines {
   cpu:  number[];
   mem:  number[];
   disk: number[];
+}
+
+export interface MonitorRow {
+  id: number;
+  name: string;
+  url: string;
+  method: string;
+  interval_seconds: number;
+  timeout_seconds: number;
+  expected_status: number;
+  headers: Record<string, string>;
+  enabled: boolean;
+  created_at: string;
+  // computed from DB joins
+  last_is_up: boolean | null;
+  last_status_code: number | null;
+  last_response_time_ms: number | null;
+  last_error: string | null;
+  last_cert_expires_at: string | null;
+  last_checked_at: string | null;
+  uptime_24h: number | null;
+  uptime_7d: number | null;
+  uptime_30d: number | null;
+}
+
+export interface MonitorCheck {
+  id: number;
+  monitor_id: number;
+  status_code: number | null;
+  response_time_ms: number | null;
+  is_up: boolean;
+  error: string | null;
+  cert_expires_at: string | null;
+  checked_at: string;
 }
 
 export interface AppData {

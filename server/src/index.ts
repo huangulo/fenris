@@ -4,7 +4,8 @@ import env from '@fastify/env';
 import { readFileSync } from 'fs';
 import { load } from 'js-yaml';
 import { initDatabase, initializeTables, closeDatabase, query } from './db/client.js';
-import { initServices, healthCheck, receiveMetrics, listServers, getAllMetrics, getServerMetrics, listAlerts, acknowledgeAlert, getConfig, getDockerContainers, getDockerContainerHistory, getAlertSummary, listSummaries, sendTestAlert } from './api/routes.js';
+import { initServices, healthCheck, receiveMetrics, listServers, getAllMetrics, getServerMetrics, listAlerts, acknowledgeAlert, getConfig, getDockerContainers, getDockerContainerHistory, getAlertSummary, listSummaries, sendTestAlert, listMonitors, createMonitor, updateMonitor, deleteMonitor, getMonitorChecks, testMonitorNow, setUptimeMonitor } from './api/routes.js';
+import { UptimeMonitor } from './monitors/uptime.js';
 import { Predictor, parseDurationMs } from './engine/predictor.js';
 import { Summarizer } from './engine/summarizer.js';
 import { Config } from './types.js';
@@ -15,6 +16,7 @@ let config: Config;
 let retentionInterval: NodeJS.Timeout | null = null;
 let predictor: Predictor | null = null;
 let summarizer: Summarizer | null = null;
+let uptimeMonitor: UptimeMonitor | null = null;
 
 async function loadConfig(): Promise<Config> {
   const configPath = process.env.FENRIS_CONFIG || '/app/fenris.yaml';
@@ -115,6 +117,11 @@ async function startRetentionJob(): Promise<void> {
         [alertsDays]
       );
       console.log('Retention: deleted', aResult.rowCount, 'alert rows older than', alertsDays, 'days');
+
+      const cResult = await query(
+        "DELETE FROM monitor_checks WHERE checked_at < NOW() - INTERVAL '90 days'"
+      );
+      console.log('Retention: deleted', cResult.rowCount, 'monitor_checks older than 90 days');
     } catch (error) {
       console.error('Retention job error:', error);
     }
@@ -199,6 +206,13 @@ async function start(): Promise<void> {
     server.post('/api/v1/alerts/:id/acknowledge', acknowledgeAlert);
     server.post('/api/v1/test-alert', sendTestAlert);
     server.get('/api/v1/config', getConfig);
+
+    server.get('/api/v1/monitors', listMonitors);
+    server.post('/api/v1/monitors', createMonitor);
+    server.put('/api/v1/monitors/:id', updateMonitor);
+    server.delete('/api/v1/monitors/:id', deleteMonitor);
+    server.get('/api/v1/monitors/:id/checks', getMonitorChecks);
+    server.post('/api/v1/monitors/:id/test', testMonitorNow);
     
     // Graceful shutdown
     const signals = ['SIGINT', 'SIGTERM'];
@@ -209,6 +223,7 @@ async function start(): Promise<void> {
         if (retentionInterval) clearInterval(retentionInterval);
         predictor?.stop();
         summarizer?.stop();
+        uptimeMonitor?.stop();
 
         await closeDatabase();
         await server.close();
@@ -250,6 +265,12 @@ async function start(): Promise<void> {
     // Summarizer is started inside initServices (routes.ts); keep a reference for graceful shutdown
     const { getSummarizer } = await import('./api/routes.js');
     summarizer = getSummarizer();
+
+    // Start uptime monitor
+    const { getDispatcher: getDisp } = await import('./api/routes.js');
+    uptimeMonitor = new UptimeMonitor(getDisp());
+    setUptimeMonitor(uptimeMonitor);
+    await uptimeMonitor.start();
     
   } catch (error) {
     console.error('Failed to start server:', error);

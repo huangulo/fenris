@@ -3,12 +3,14 @@ import { query } from '../db/client.js';
 import { AnomalyDetector } from '../engine/anomaly.js';
 import { AlertDispatcher, TestResult } from '../alerts/dispatcher.js';
 import { Summarizer } from '../engine/summarizer.js';
+import { UptimeMonitor, MonitorConfig } from '../monitors/uptime.js';
 import { Metric, Alert, ContainerStats, Config } from '../types.js';
 
 // Global instances
 let detector: AnomalyDetector;
 let dispatcher: AlertDispatcher;
 let summarizer: Summarizer | null = null;
+let uptimeMonitor: UptimeMonitor | null = null;
 let config: Config;
 
 // Fenris containers excluded from anomaly detection (self-referential noise)
@@ -29,6 +31,14 @@ export function getDispatcher(): AlertDispatcher {
 
 export function getSummarizer(): Summarizer | null {
   return summarizer;
+}
+
+export function setUptimeMonitor(m: UptimeMonitor): void {
+  uptimeMonitor = m;
+}
+
+export function getUptimeMonitor(): UptimeMonitor | null {
+  return uptimeMonitor;
 }
 
 export async function healthCheck(request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> {
@@ -501,5 +511,157 @@ export async function getConfig(request: FastifyRequest, reply: FastifyReply): P
   } catch (error) {
     console.error('Error getting config:', error);
     return reply.status(500).send({ error: 'Failed to get config' });
+  }
+}
+
+// ── Uptime Monitor routes ─────────────────────────────────────────────────────
+
+const MONITOR_UPTIME_SQL = `
+  SELECT
+    m.*,
+    lc.status_code      AS last_status_code,
+    lc.response_time_ms AS last_response_time_ms,
+    lc.is_up            AS last_is_up,
+    lc.error            AS last_error,
+    lc.cert_expires_at  AS last_cert_expires_at,
+    lc.checked_at       AS last_checked_at,
+    u24.uptime_pct      AS uptime_24h,
+    u7d.uptime_pct      AS uptime_7d,
+    u30d.uptime_pct     AS uptime_30d
+  FROM monitors m
+  LEFT JOIN LATERAL (
+    SELECT status_code, response_time_ms, is_up, error, cert_expires_at, checked_at
+    FROM monitor_checks WHERE monitor_id = m.id ORDER BY checked_at DESC LIMIT 1
+  ) lc ON true
+  LEFT JOIN LATERAL (
+    SELECT ROUND(100.0 * COUNT(*) FILTER (WHERE is_up) / NULLIF(COUNT(*), 0), 1) AS uptime_pct
+    FROM monitor_checks WHERE monitor_id = m.id AND checked_at > NOW() - INTERVAL '24 hours'
+  ) u24 ON true
+  LEFT JOIN LATERAL (
+    SELECT ROUND(100.0 * COUNT(*) FILTER (WHERE is_up) / NULLIF(COUNT(*), 0), 1) AS uptime_pct
+    FROM monitor_checks WHERE monitor_id = m.id AND checked_at > NOW() - INTERVAL '7 days'
+  ) u7d ON true
+  LEFT JOIN LATERAL (
+    SELECT ROUND(100.0 * COUNT(*) FILTER (WHERE is_up) / NULLIF(COUNT(*), 0), 1) AS uptime_pct
+    FROM monitor_checks WHERE monitor_id = m.id AND checked_at > NOW() - INTERVAL '30 days'
+  ) u30d ON true
+`;
+
+export async function listMonitors(_request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> {
+  try {
+    const result = await query(`${MONITOR_UPTIME_SQL} ORDER BY m.name`);
+    return reply.send(result.rows);
+  } catch (error) {
+    console.error('Error listing monitors:', error);
+    return reply.status(500).send({ error: 'Failed to list monitors' });
+  }
+}
+
+export async function createMonitor(
+  request: FastifyRequest<{ Body: Partial<MonitorConfig> }>,
+  reply: FastifyReply
+): Promise<FastifyReply> {
+  try {
+    const { name, url, method, interval_seconds, timeout_seconds, expected_status, headers } = request.body;
+    if (!name || !url) return reply.status(400).send({ error: 'name and url are required' });
+
+    const { rows } = await query(
+      `INSERT INTO monitors (name, url, method, interval_seconds, timeout_seconds, expected_status, headers)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [name, url, method ?? 'GET', interval_seconds ?? 60, timeout_seconds ?? 10, expected_status ?? 200, JSON.stringify(headers ?? {})]
+    );
+    const monitor = rows[0];
+    await uptimeMonitor?.reloadMonitor(monitor.id);
+    return reply.status(201).send(monitor);
+  } catch (error) {
+    console.error('Error creating monitor:', error);
+    return reply.status(500).send({ error: 'Failed to create monitor' });
+  }
+}
+
+export async function updateMonitor(
+  request: FastifyRequest<{ Params: { id: string }; Body: Partial<MonitorConfig & { enabled: boolean }> }>,
+  reply: FastifyReply
+): Promise<FastifyReply> {
+  try {
+    const id = parseInt(request.params.id);
+    const { name, url, method, interval_seconds, timeout_seconds, expected_status, headers, enabled } = request.body;
+
+    const { rows } = await query(
+      `UPDATE monitors
+       SET name             = COALESCE($1, name),
+           url              = COALESCE($2, url),
+           method           = COALESCE($3, method),
+           interval_seconds = COALESCE($4, interval_seconds),
+           timeout_seconds  = COALESCE($5, timeout_seconds),
+           expected_status  = COALESCE($6, expected_status),
+           headers          = COALESCE($7, headers),
+           enabled          = COALESCE($8, enabled)
+       WHERE id = $9 RETURNING *`,
+      [name, url, method, interval_seconds, timeout_seconds, expected_status,
+       headers ? JSON.stringify(headers) : undefined, enabled, id]
+    );
+    if (rows.length === 0) return reply.status(404).send({ error: 'Monitor not found' });
+
+    await uptimeMonitor?.reloadMonitor(id);
+    return reply.send(rows[0]);
+  } catch (error) {
+    console.error('Error updating monitor:', error);
+    return reply.status(500).send({ error: 'Failed to update monitor' });
+  }
+}
+
+export async function deleteMonitor(
+  request: FastifyRequest<{ Params: { id: string } }>,
+  reply: FastifyReply
+): Promise<FastifyReply> {
+  try {
+    const id = parseInt(request.params.id);
+    uptimeMonitor?.removeMonitor(id);
+    const { rows } = await query('DELETE FROM monitors WHERE id = $1 RETURNING id', [id]);
+    if (rows.length === 0) return reply.status(404).send({ error: 'Monitor not found' });
+    return reply.send({ deleted: true });
+  } catch (error) {
+    console.error('Error deleting monitor:', error);
+    return reply.status(500).send({ error: 'Failed to delete monitor' });
+  }
+}
+
+export async function getMonitorChecks(
+  request: FastifyRequest<{ Params: { id: string } }>,
+  reply: FastifyReply
+): Promise<FastifyReply> {
+  try {
+    const id = parseInt(request.params.id);
+    const limit = Math.min(parseInt((request.query as any).limit || '100'), 500);
+    const { rows } = await query(
+      'SELECT * FROM monitor_checks WHERE monitor_id = $1 ORDER BY checked_at DESC LIMIT $2',
+      [id, limit]
+    );
+    return reply.send(rows);
+  } catch (error) {
+    console.error('Error fetching monitor checks:', error);
+    return reply.status(500).send({ error: 'Failed to fetch checks' });
+  }
+}
+
+export async function testMonitorNow(
+  request: FastifyRequest<{ Params: { id: string } }>,
+  reply: FastifyReply
+): Promise<FastifyReply> {
+  try {
+    const id = parseInt(request.params.id);
+    const { rows } = await query('SELECT * FROM monitors WHERE id = $1', [id]);
+    if (rows.length === 0) return reply.status(404).send({ error: 'Monitor not found' });
+
+    const monitor = rows[0] as MonitorConfig;
+    if (!uptimeMonitor) {
+      return reply.status(503).send({ error: 'Uptime monitor not running' });
+    }
+    const result = await uptimeMonitor.runTestCheck(monitor);
+    return reply.send(result);
+  } catch (error) {
+    console.error('Error running test check:', error);
+    return reply.status(500).send({ error: 'Failed to run test check' });
   }
 }

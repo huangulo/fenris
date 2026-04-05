@@ -89,6 +89,34 @@ DO $$ BEGIN
   END IF;
 END $$;
 
+-- ── Uptime Monitors ───────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS monitors (
+  id               SERIAL PRIMARY KEY,
+  name             VARCHAR(255) NOT NULL,
+  url              TEXT NOT NULL,
+  method           VARCHAR(10)  DEFAULT 'GET',
+  interval_seconds INTEGER      DEFAULT 60,
+  timeout_seconds  INTEGER      DEFAULT 10,
+  expected_status  INTEGER      DEFAULT 200,
+  headers          JSONB        DEFAULT '{}',
+  enabled          BOOLEAN      DEFAULT TRUE,
+  created_at       TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS monitor_checks (
+  id               SERIAL PRIMARY KEY,
+  monitor_id       INTEGER REFERENCES monitors(id) ON DELETE CASCADE,
+  status_code      INTEGER,
+  response_time_ms INTEGER,
+  is_up            BOOLEAN NOT NULL,
+  error            TEXT,
+  cert_expires_at  TIMESTAMP WITH TIME ZONE,
+  checked_at       TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_monitor_checks_monitor_ts ON monitor_checks (monitor_id, checked_at DESC);
+
 -- Trigger for automatic timestamp updates
 CREATE OR REPLACE FUNCTION update_timestamp()
 RETURNS TRIGGER AS $$
