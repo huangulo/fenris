@@ -522,7 +522,7 @@ export async function getStatus(_request: FastifyRequest, reply: FastifyReply): 
       query('SELECT COUNT(*) AS total, COUNT(last_heartbeat) FILTER (WHERE last_heartbeat > NOW() - INTERVAL \'90 seconds\') AS online FROM servers'),
       query("SELECT value->'docker' AS containers FROM metrics WHERE metric_type = 'docker' ORDER BY timestamp DESC LIMIT 50"),
       query('SELECT is_up FROM (SELECT DISTINCT ON (monitor_id) is_up FROM monitor_checks ORDER BY monitor_id, checked_at DESC) sub'),
-      query("SELECT COUNT(*) AS total FROM alerts WHERE acknowledged = FALSE AND created_at > NOW() - INTERVAL '24 hours'"),
+      query('SELECT COUNT(*) AS total FROM alerts WHERE acknowledged = FALSE'),
     ]);
 
     const serversTotal  = parseInt(serversRes.rows[0]?.total ?? '0');
