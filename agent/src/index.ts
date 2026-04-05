@@ -13,12 +13,7 @@ const DOCKER_IP_RE = /^172\.(1[6-9]|2\d|3[01])\.|^10\.0\./;
 const DOCKER_IFACE_RE = /^(docker|br-|veth|virbr|cni|flannel|calico)/;
 
 async function getHostIP(): Promise<string> {
-  // 1. Honour explicit override (useful when running inside Docker)
-  const envIP = process.env.HOST_IP;
-  if (envIP && envIP.trim()) {
-    console.log(`[agent] using HOST_IP from environment: ${envIP.trim()}`);
-    return envIP.trim();
-  }
+  if (process.env.HOST_IP?.trim()) return process.env.HOST_IP.trim();
 
   try {
     const nics = await si.networkInterfaces('*');
