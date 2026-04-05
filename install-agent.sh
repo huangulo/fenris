@@ -46,6 +46,10 @@ printf "\n${BOLD}Fenris Agent Setup${NC}\n\n"
 printf "Fenris server URL (e.g. http://192.168.1.10:3200): "
 read -r SERVER_URL
 [ -z "$SERVER_URL" ] && die "Server URL is required."
+case "$SERVER_URL" in
+  http://*|https://*) ;;
+  *) SERVER_URL="http://$SERVER_URL" ;;
+esac
 
 printf "API key (X-API-Key used by this agent): "
 read -r API_KEY
