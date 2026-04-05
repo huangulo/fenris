@@ -514,6 +514,60 @@ export async function getConfig(request: FastifyRequest, reply: FastifyReply): P
   }
 }
 
+// ── Homepage status widget ────────────────────────────────────────────────────
+
+export async function getStatus(_request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> {
+  try {
+    const [serversRes, dockerRes, monitorsRes, alertsRes] = await Promise.all([
+      query('SELECT COUNT(*) AS total, COUNT(last_heartbeat) FILTER (WHERE last_heartbeat > NOW() - INTERVAL \'90 seconds\') AS online FROM servers'),
+      query("SELECT value->'docker' AS containers FROM metrics WHERE metric_type = 'docker' ORDER BY timestamp DESC LIMIT 50"),
+      query('SELECT is_up FROM (SELECT DISTINCT ON (monitor_id) is_up FROM monitor_checks ORDER BY monitor_id, checked_at DESC) sub'),
+      query("SELECT COUNT(*) AS total FROM alerts WHERE acknowledged = FALSE AND created_at > NOW() - INTERVAL '24 hours'"),
+    ]);
+
+    const serversTotal  = parseInt(serversRes.rows[0]?.total ?? '0');
+    const serversOnline = parseInt(serversRes.rows[0]?.online ?? '0');
+
+    // Aggregate container counts from latest docker metrics per server
+    let containersRunning = 0;
+    let containersTotal   = 0;
+    for (const row of dockerRes.rows) {
+      const list: Array<{ state: string }> = row.containers ?? [];
+      containersTotal   += list.length;
+      containersRunning += list.filter(c => c.state === 'running').length;
+    }
+
+    const monitorsUp    = monitorsRes.rows.filter(r => r.is_up).length;
+    const monitorsTotal = monitorsRes.rows.length;
+
+    // 30-day uptime across all monitors
+    let uptimePct = 100;
+    if (monitorsTotal > 0) {
+      const uptimeRes = await query(
+        `SELECT ROUND(100.0 * COUNT(*) FILTER (WHERE is_up) / NULLIF(COUNT(*), 0), 1) AS pct
+         FROM monitor_checks WHERE checked_at > NOW() - INTERVAL '30 days'`
+      );
+      uptimePct = parseFloat(uptimeRes.rows[0]?.pct ?? '100');
+    }
+
+    const activeAlerts = parseInt(alertsRes.rows[0]?.total ?? '0');
+
+    return reply.send({
+      servers_online:      serversOnline,
+      servers_total:       serversTotal,
+      containers_running:  containersRunning,
+      containers_total:    containersTotal,
+      monitors_up:         monitorsUp,
+      monitors_total:      monitorsTotal,
+      active_alerts:       activeAlerts,
+      uptime_percentage:   uptimePct,
+    });
+  } catch (error) {
+    console.error('Error building status:', error);
+    return reply.status(500).send({ error: 'Failed to build status' });
+  }
+}
+
 // ── Uptime Monitor routes ─────────────────────────────────────────────────────
 
 const MONITOR_UPTIME_SQL = `

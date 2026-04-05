@@ -335,6 +335,50 @@ Requires `ai.enabled: true` and a valid `ai.api_key` in `fenris.yaml`.
 
 ---
 
+## Homepage Dashboard Integration
+
+Fenris exposes a [`GET /api/v1/status`](http://localhost:3200/api/v1/status) endpoint compatible with [Homepage](https://gethomepage.dev)'s `customapi` widget.
+
+Add this to your Homepage `services.yaml`:
+
+```yaml
+- Fenris:
+    icon: fenris
+    href: http://your-fenris-url:8081
+    widget:
+      type: customapi
+      url: http://your-fenris-url:3200/api/v1/status
+      headers:
+        X-API-Key: your-api-key
+      mappings:
+        - field: servers_online
+          label: Servers
+          format: text
+        - field: monitors_up
+          label: Uptime
+          format: text
+        - field: active_alerts
+          label: Alerts
+          format: text
+```
+
+The endpoint returns:
+
+```json
+{
+  "servers_online": 3,
+  "servers_total": 3,
+  "containers_running": 45,
+  "containers_total": 45,
+  "monitors_up": 5,
+  "monitors_total": 5,
+  "active_alerts": 2,
+  "uptime_percentage": 99.8
+}
+```
+
+---
+
 ## Contributing
 
 1. Fork and create a feature branch
