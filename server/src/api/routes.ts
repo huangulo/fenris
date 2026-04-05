@@ -6,6 +6,18 @@ import { Summarizer } from '../engine/summarizer.js';
 import { UptimeMonitor, MonitorConfig } from '../monitors/uptime.js';
 import { Metric, Alert, ContainerStats, Config } from '../types.js';
 
+/** Resolve floor thresholds with hardcoded defaults so the config key is optional. */
+function getFloors(cfg: Config) {
+  const f = cfg.anomaly_detection.floors;
+  return {
+    cpu:           f?.cpu           ?? 50,
+    memory:        f?.memory        ?? 60,
+    disk:          f?.disk          ?? 70,
+    docker_cpu:    f?.docker_cpu    ?? 30,
+    docker_memory: f?.docker_memory ?? 40,
+  };
+}
+
 // Global instances
 let detector: AnomalyDetector;
 let dispatcher: AlertDispatcher;
@@ -92,24 +104,30 @@ export async function ingestMetrics(metrics: Metric[]): Promise<{ anomaliesDetec
 
         // Z-score anomaly on CPU and memory (skip Fenris containers)
         if (!DOCKER_EXCLUDED.has(c.name)) {
+          const floors = getFloors(config);
+
           const cpuKey = key(`docker:${c.name}:cpu`);
           detector.addMetric(cpuKey, c.cpu_percent);
-          const cpuResult = detector.detectAnomaly(cpuKey, c.cpu_percent);
-          if (cpuResult.isAnomaly) {
-            anomalyResults.set(cpuKey, {
-              isAnomaly: true, severity: 'warning', value: c.cpu_percent,
-              message: `Container '${c.name}' CPU anomaly: ${c.cpu_percent.toFixed(1)}%`
-            });
+          if (c.cpu_percent > floors.docker_cpu) {
+            const cpuResult = detector.detectAnomaly(cpuKey, c.cpu_percent);
+            if (cpuResult.isAnomaly) {
+              anomalyResults.set(cpuKey, {
+                isAnomaly: true, severity: 'warning', value: c.cpu_percent,
+                message: `Container '${c.name}' CPU anomaly: ${c.cpu_percent.toFixed(1)}%`
+              });
+            }
           }
 
           const memKey = key(`docker:${c.name}:memory`);
           detector.addMetric(memKey, c.memory_percent);
-          const memResult = detector.detectAnomaly(memKey, c.memory_percent);
-          if (memResult.isAnomaly) {
-            anomalyResults.set(memKey, {
-              isAnomaly: true, severity: 'warning', value: c.memory_percent,
-              message: `Container '${c.name}' memory anomaly: ${c.memory_percent.toFixed(1)}%`
-            });
+          if (c.memory_percent > floors.docker_memory) {
+            const memResult = detector.detectAnomaly(memKey, c.memory_percent);
+            if (memResult.isAnomaly) {
+              anomalyResults.set(memKey, {
+                isAnomaly: true, severity: 'warning', value: c.memory_percent,
+                message: `Container '${c.name}' memory anomaly: ${c.memory_percent.toFixed(1)}%`
+              });
+            }
           }
         }
       }
@@ -129,15 +147,23 @@ export async function ingestMetrics(metrics: Metric[]): Promise<{ anomaliesDetec
 
     const metricKey = key(metric.metric_type);
     detector.addMetric(metricKey, numericValue);
-    const result = detector.detectAnomaly(metricKey, numericValue);
 
-    if (result.isAnomaly) {
-      const severity = determineSeverity(metric.metric_type, numericValue, config.alerts.thresholds);
-      anomalyResults.set(metric.metric_type, {
-        isAnomaly: true,
-        severity,
-        value: numericValue
-      });
+    const floors = getFloors(config);
+    const floor = metric.metric_type === 'cpu'    ? floors.cpu
+                : metric.metric_type === 'memory' ? floors.memory
+                : metric.metric_type === 'disk'   ? floors.disk
+                : null;
+
+    if (floor !== null && numericValue > floor) {
+      const result = detector.detectAnomaly(metricKey, numericValue);
+      if (result.isAnomaly) {
+        const severity = determineSeverity(metric.metric_type, numericValue, config.alerts.thresholds);
+        anomalyResults.set(metric.metric_type, {
+          isAnomaly: true,
+          severity,
+          value: numericValue
+        });
+      }
     }
   }
 
