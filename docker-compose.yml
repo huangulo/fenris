@@ -66,7 +66,7 @@ services:
       # Set HOST_IP to your host's LAN IP when the agent cannot auto-detect it
       # (e.g. when the host only has Docker bridge interfaces visible).
       # Example: HOST_IP=192.168.1.42
-      HOST_IP: ${HOST_IP:-}
+      HOST_IP: 100.90.129.230
     volumes:
       - ./agent-local/fenris-agent.yaml:/app/fenris-agent.yaml:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
