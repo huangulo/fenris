@@ -7,23 +7,45 @@ import { Metric, AgentPayload } from './types.js';
 
 const MAX_BUFFER = 100;
 
-// Docker bridge IP range: 172.16.0.0/12 (172.16–31.x.x)
-const DOCKER_IP_RE = /^172\.(1[6-9]|2\d|3[01])\./;
+// Docker/container bridge IP ranges to exclude
+const DOCKER_IP_RE = /^172\.(1[6-9]|2\d|3[01])\.|^10\.0\./;
+// Docker interface name patterns to exclude
+const DOCKER_IFACE_RE = /^(docker|br-|veth|virbr|cni|flannel|calico)/;
 
 async function getHostIP(): Promise<string> {
+  // 1. Honour explicit override (useful when running inside Docker)
+  const envIP = process.env.HOST_IP;
+  if (envIP && envIP.trim()) {
+    console.log(`[agent] using HOST_IP from environment: ${envIP.trim()}`);
+    return envIP.trim();
+  }
+
   try {
     const nics = await si.networkInterfaces('*');
     const list = Array.isArray(nics) ? nics : [nics];
-    const candidate = list.find(n =>
+
+    const candidates = list.filter(n =>
       !n.internal &&
       n.ip4 &&
-      !/^(docker|br-|veth|virbr)/.test(n.iface) &&
+      !DOCKER_IFACE_RE.test(n.iface) &&
       !DOCKER_IP_RE.test(n.ip4)
     );
-    return candidate?.ip4 ?? '';
-  } catch {
-    return '';
-  }
+
+    // Prefer the interface marked as default gateway
+    const preferred = candidates.find(n => (n as any).default) ?? candidates[0];
+    if (preferred?.ip4) return preferred.ip4;
+
+    // 2. Fallback: try to derive from the default gateway address
+    const gw = await si.networkGatewayDefault();
+    if (gw && typeof gw === 'string' && gw.trim() && gw.trim() !== '0.0.0.0') {
+      // Return the host IP on the same subnet as the gateway (best-effort)
+      const gwPrefix = gw.split('.').slice(0, 3).join('.');
+      const sameSubnet = list.find(n => n.ip4?.startsWith(gwPrefix) && !n.internal);
+      if (sameSubnet?.ip4) return sameSubnet.ip4;
+    }
+  } catch { /* fall through */ }
+
+  return '';
 }
 
 // Buffered payloads to flush when server is reachable again
