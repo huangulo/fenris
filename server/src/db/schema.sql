@@ -117,6 +117,26 @@ CREATE TABLE IF NOT EXISTS monitor_checks (
 
 CREATE INDEX IF NOT EXISTS idx_monitor_checks_monitor_ts ON monitor_checks (monitor_id, checked_at DESC);
 
+-- ── Wazuh Agent State ─────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS wazuh_agents (
+  id                 SERIAL PRIMARY KEY,
+  wazuh_id           VARCHAR(20)  NOT NULL UNIQUE,
+  name               VARCHAR(255) NOT NULL,
+  ip_address         VARCHAR(45),
+  status             VARCHAR(50),
+  os_name            VARCHAR(100),
+  os_version         VARCHAR(100),
+  agent_version      VARCHAR(50),
+  last_keep_alive    TIMESTAMP WITH TIME ZONE,
+  group_name         VARCHAR(100),
+  first_seen         TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  last_seen          TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  last_status_change TIMESTAMP WITH TIME ZONE
+);
+
+CREATE INDEX IF NOT EXISTS idx_wazuh_agents_status ON wazuh_agents(status);
+
 -- Trigger for automatic timestamp updates
 CREATE OR REPLACE FUNCTION update_timestamp()
 RETURNS TRIGGER AS $$
