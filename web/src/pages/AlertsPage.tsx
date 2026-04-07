@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import ReactMarkdown from 'react-markdown';
 import { AlertRow, ServerRow, SummaryRow } from '../types';
 import { fmtRelativeTime } from '../utils';
 import { SeverityBadge } from '../components/Badges';
@@ -15,64 +16,71 @@ interface AlertsPageProps {
 type SeverityFilter = 'all' | 'critical' | 'warning' | 'info';
 type StatusFilter   = 'all' | 'active' | 'acknowledged';
 
-// ── Inline AI summary panel ───────────────────────────────────────────────────
+// ── AI summary expanded row ───────────────────────────────────────────────────
 
-function AISummaryInline({ alertId, summaries }: { alertId: number; summaries: SummaryRow[] }) {
+const severityBorderClass: Record<string, string> = {
+  critical: 'border-l-red-500',
+  warning:  'border-l-yellow-500',
+  info:     'border-l-blue-400',
+};
+
+interface SummaryExpandedRowProps {
+  alertId:   number;
+  severity:  string;
+  summaries: SummaryRow[];
+  colSpan:   number;
+}
+
+function SummaryExpandedRow({ alertId, severity, summaries, colSpan }: SummaryExpandedRowProps) {
   const [text, setText]       = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [open, setOpen]       = useState(false);
 
-  // Check if this alert already has a summary in the pre-loaded list
   const preloaded = useMemo(
     () => summaries.find(s => s.alert_ids.includes(alertId)),
     [summaries, alertId]
   );
 
-  const toggle = async () => {
-    if (open) { setOpen(false); return; }
-    setOpen(true);
+  // Fetch on mount if not preloaded
+  React.useEffect(() => {
     if (preloaded) { setText(preloaded.summary); return; }
-    if (text !== null) return; // already fetched
-
     setLoading(true);
-    try {
-      const res = await apiFetch(`/api/v1/alerts/${alertId}/summary`);
-      if (res.ok) {
-        const data = await res.json() as { summary: string };
-        setText(data.summary);
-      } else {
-        setText('No AI summary available for this alert.');
-      }
-    } catch {
-      setText('Failed to load summary.');
-    } finally {
-      setLoading(false);
-    }
-  };
+    apiFetch(`/api/v1/alerts/${alertId}/summary`)
+      .then(res => res.ok ? res.json() : Promise.reject())
+      .then((data: { summary: string }) => setText(data.summary))
+      .catch(() => setText('No AI summary available for this alert.'))
+      .finally(() => setLoading(false));
+  }, [alertId, preloaded]);
+
+  const borderClass = severityBorderClass[severity] ?? 'border-l-violet-500';
 
   return (
-    <span className="inline-flex flex-col items-end gap-1">
-      <button
-        onClick={toggle}
-        title="View AI summary"
-        className={`text-[10px] font-bold px-1.5 py-0.5 rounded border transition-colors ${
-          open
-            ? 'bg-violet-500/25 text-violet-300 border-violet-500/50'
-            : 'bg-violet-500/10 text-violet-400 border-violet-700/40 hover:bg-violet-500/20'
-        }`}
-      >
-        AI
-      </button>
-      {open && (
-        <div className="mt-1 w-72 text-left bg-gray-900 border border-violet-700/30 rounded-lg p-3 text-[11px] text-gray-300 leading-relaxed shadow-xl z-10">
+    <tr>
+      <td colSpan={colSpan} className="px-0 pt-0 pb-2">
+        <div
+          className={`mx-4 rounded-r-lg border-l-2 ${borderClass} bg-gray-900/70 px-4 py-3 text-[11px] text-gray-300 leading-relaxed`}
+        >
           {loading ? (
-            <span className="text-gray-500">Loading summary…</span>
+            <span className="text-gray-500 italic">Loading summary…</span>
           ) : (
-            text
+            <ReactMarkdown
+              components={{
+                p:      ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+                strong: ({ children }) => <strong className="font-semibold text-gray-100">{children}</strong>,
+                em:     ({ children }) => <em className="italic text-gray-300">{children}</em>,
+                ul:     ({ children }) => <ul className="list-disc list-inside mb-2 space-y-0.5">{children}</ul>,
+                ol:     ({ children }) => <ol className="list-decimal list-inside mb-2 space-y-0.5">{children}</ol>,
+                li:     ({ children }) => <li className="text-gray-400">{children}</li>,
+                code:   ({ children }) => (
+                  <code className="bg-gray-800 text-cyan-300 rounded px-1 py-0.5 text-[10px]">{children}</code>
+                ),
+              }}
+            >
+              {text ?? ''}
+            </ReactMarkdown>
           )}
         </div>
-      )}
-    </span>
+      </td>
+    </tr>
   );
 }
 
@@ -83,6 +91,7 @@ export function AlertsPage({ alerts, servers, summaries, onAcknowledge, onAcknow
   const [severityFilter, setSeverityFilter] = useState<SeverityFilter>('all');
   const [statusFilter,   setStatusFilter]   = useState<StatusFilter>('active');
   const [selected,       setSelected]       = useState<Set<number>>(new Set());
+  const [expandedId,     setExpandedId]     = useState<number | null>(null);
 
   const filtered = useMemo(() => {
     return alerts.filter(a => {
@@ -227,49 +236,71 @@ export function AlertsPage({ alerts, servers, summaries, onAcknowledge, onAcknow
               </tr>
             </thead>
             <tbody>
-              {filtered.map(alert => (
-                <tr
-                  key={alert.id}
-                  className={`border-b border-gray-800/50 last:border-0 transition-opacity ${
-                    alert.acknowledged ? 'opacity-35' : 'hover:bg-gray-800/20'
-                  }`}
-                >
-                  <td className="px-4 py-3">
-                    {!alert.acknowledged && <SelectBox id={alert.id} />}
-                  </td>
-                  <td className="px-4 py-3">
-                    <SeverityBadge sev={alert.severity} />
-                  </td>
-                  <td className="px-4 py-3 text-gray-300 font-semibold whitespace-nowrap">
-                    {alert.server_name ?? `#${alert.server_id}`}
-                  </td>
-                  <td className="px-4 py-3 text-gray-400 max-w-[260px] truncate" title={alert.message}>
-                    {alert.message}
-                  </td>
-                  <td className="px-4 py-3 text-gray-600 uppercase hidden sm:table-cell">
-                    {alert.metric_type ?? '—'}
-                  </td>
-                  <td className="px-4 py-3 text-right text-gray-600 whitespace-nowrap">
-                    {fmtRelativeTime(alert.created_at)}
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <div className="flex items-center justify-end gap-2">
-                      {/* AI summary badge — show for alerts with a summary or predictive alerts */}
-                      {(alertsWithSummary.has(alert.id) || alert.summary_id != null) && (
-                        <AISummaryInline alertId={alert.id} summaries={summaries} />
-                      )}
-                      {!alert.acknowledged && (
-                        <button
-                          onClick={() => onAcknowledge(alert.id)}
-                          className="text-gray-600 hover:text-cyan-400 border border-transparent hover:border-cyan-800/50 rounded px-2 py-0.5 transition-colors whitespace-nowrap"
-                        >
-                          ack
-                        </button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              {filtered.map(alert => {
+                const hasSummary = alertsWithSummary.has(alert.id) || alert.summary_id != null;
+                const isExpanded = expandedId === alert.id;
+                return (
+                  <React.Fragment key={alert.id}>
+                    <tr
+                      className={`border-b border-gray-800/50 transition-opacity ${
+                        isExpanded ? '' : 'last:border-0'
+                      } ${alert.acknowledged ? 'opacity-35' : 'hover:bg-gray-800/20'}`}
+                    >
+                      <td className="px-4 py-3">
+                        {!alert.acknowledged && <SelectBox id={alert.id} />}
+                      </td>
+                      <td className="px-4 py-3">
+                        <SeverityBadge sev={alert.severity} />
+                      </td>
+                      <td className="px-4 py-3 text-gray-300 font-semibold whitespace-nowrap">
+                        {alert.server_name ?? `#${alert.server_id}`}
+                      </td>
+                      <td className="px-4 py-3 text-gray-400 max-w-[260px] truncate" title={alert.message}>
+                        {alert.message}
+                      </td>
+                      <td className="px-4 py-3 text-gray-600 uppercase hidden sm:table-cell">
+                        {alert.metric_type ?? '—'}
+                      </td>
+                      <td className="px-4 py-3 text-right text-gray-600 whitespace-nowrap">
+                        {fmtRelativeTime(alert.created_at)}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          {hasSummary && (
+                            <button
+                              onClick={() => setExpandedId(isExpanded ? null : alert.id)}
+                              title="View AI summary"
+                              className={`text-[10px] font-bold px-1.5 py-0.5 rounded border transition-colors ${
+                                isExpanded
+                                  ? 'bg-violet-500/25 text-violet-300 border-violet-500/50'
+                                  : 'bg-violet-500/10 text-violet-400 border-violet-700/40 hover:bg-violet-500/20'
+                              }`}
+                            >
+                              AI
+                            </button>
+                          )}
+                          {!alert.acknowledged && (
+                            <button
+                              onClick={() => onAcknowledge(alert.id)}
+                              className="text-gray-600 hover:text-cyan-400 border border-transparent hover:border-cyan-800/50 rounded px-2 py-0.5 transition-colors whitespace-nowrap"
+                            >
+                              ack
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                    {isExpanded && (
+                      <SummaryExpandedRow
+                        alertId={alert.id}
+                        severity={alert.severity}
+                        summaries={summaries}
+                        colSpan={7}
+                      />
+                    )}
+                  </React.Fragment>
+                );
+              })}
             </tbody>
           </table>
         </div>
