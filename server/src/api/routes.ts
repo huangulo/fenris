@@ -4,6 +4,7 @@ import { AnomalyDetector } from '../engine/anomaly.js';
 import { AlertDispatcher, TestResult } from '../alerts/dispatcher.js';
 import { Summarizer } from '../engine/summarizer.js';
 import { UptimeMonitor, MonitorConfig } from '../monitors/uptime.js';
+import { WazuhMonitor } from '../monitors/wazuh.js';
 import { Metric, Alert, ContainerStats, Config } from '../types.js';
 
 /** Resolve floor thresholds with hardcoded defaults so the config key is optional. */
@@ -23,6 +24,7 @@ let detector: AnomalyDetector;
 let dispatcher: AlertDispatcher;
 let summarizer: Summarizer | null = null;
 let uptimeMonitor: UptimeMonitor | null = null;
+let wazuhMonitor:  WazuhMonitor  | null = null;
 let config: Config;
 
 // Fenris containers excluded from anomaly detection (self-referential noise)
@@ -51,6 +53,14 @@ export function setUptimeMonitor(m: UptimeMonitor): void {
 
 export function getUptimeMonitor(): UptimeMonitor | null {
   return uptimeMonitor;
+}
+
+export function setWazuhMonitor(m: WazuhMonitor): void {
+  wazuhMonitor = m;
+}
+
+export function getWazuhMonitor(): WazuhMonitor | null {
+  return wazuhMonitor;
 }
 
 export async function healthCheck(request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> {
@@ -837,4 +847,99 @@ export async function testMonitorNow(
     console.error('Error running test check:', error);
     return reply.status(500).send({ error: 'Failed to run test check' });
   }
+}
+
+// ── Wazuh endpoints ───────────────────────────────────────────────────────────
+
+export async function listWazuhAgents(
+  request: FastifyRequest,
+  reply: FastifyReply
+): Promise<FastifyReply> {
+  try {
+    const { rows } = await query(
+      `SELECT * FROM wazuh_agents
+       ORDER BY
+         CASE status
+           WHEN 'disconnected'    THEN 1
+           WHEN 'never_connected' THEN 2
+           WHEN 'pending'         THEN 3
+           WHEN 'active'          THEN 4
+           ELSE 5
+         END,
+         name ASC`
+    );
+    return reply.send(rows);
+  } catch (error) {
+    console.error('Error listing Wazuh agents:', error);
+    return reply.status(500).send({ error: 'Failed to list Wazuh agents' });
+  }
+}
+
+export async function getWazuhAgent(
+  request: FastifyRequest<{ Params: { id: string } }>,
+  reply: FastifyReply
+): Promise<FastifyReply> {
+  try {
+    const { rows } = await query(
+      'SELECT * FROM wazuh_agents WHERE id = $1',
+      [parseInt(request.params.id)]
+    );
+    if (rows.length === 0) return reply.status(404).send({ error: 'Agent not found' });
+
+    // Attach related alerts (last 10 referencing this agent's name)
+    const agent = rows[0];
+    const { rows: alerts } = await query(
+      `SELECT id, severity, message, acknowledged, created_at
+       FROM alerts
+       WHERE metric_type = 'wazuh' AND message ILIKE $1
+       ORDER BY created_at DESC LIMIT 10`,
+      [`%${agent.name}%`]
+    );
+    return reply.send({ ...agent, recent_alerts: alerts });
+  } catch (error) {
+    console.error('Error fetching Wazuh agent:', error);
+    return reply.status(500).send({ error: 'Failed to fetch Wazuh agent' });
+  }
+}
+
+export async function getWazuhStatus(
+  _request: FastifyRequest,
+  reply: FastifyReply
+): Promise<FastifyReply> {
+  try {
+    const { rows } = await query(
+      `SELECT
+         COUNT(*)::int                                          AS total,
+         COUNT(*) FILTER (WHERE status = 'active')::int        AS active,
+         COUNT(*) FILTER (WHERE status = 'disconnected')::int  AS disconnected,
+         COUNT(*) FILTER (WHERE status = 'never_connected')::int AS never_connected,
+         COUNT(*) FILTER (WHERE status = 'pending')::int       AS pending
+       FROM wazuh_agents`
+    );
+    const counts = rows[0] ?? { total: 0, active: 0, disconnected: 0, never_connected: 0, pending: 0 };
+
+    const mon = wazuhMonitor;
+    return reply.send({
+      ...counts,
+      enabled:        true,
+      last_poll_at:   mon?.lastPollAt ?? null,
+      last_poll_ok:   mon?.lastPollOk ?? false,
+      last_poll_error: mon?.lastPollError ?? null,
+      manager_url:    config.wazuh?.manager_url ?? null,
+    });
+  } catch (error) {
+    console.error('Error fetching Wazuh status:', error);
+    return reply.status(500).send({ error: 'Failed to fetch Wazuh status' });
+  }
+}
+
+export async function testWazuhConnection(
+  _request: FastifyRequest,
+  reply: FastifyReply
+): Promise<FastifyReply> {
+  if (!wazuhMonitor) {
+    return reply.status(503).send({ ok: false, error: 'Wazuh monitor not enabled' });
+  }
+  const result = await wazuhMonitor.testConnection();
+  return reply.send(result);
 }

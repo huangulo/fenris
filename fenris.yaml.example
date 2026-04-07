@@ -114,6 +114,18 @@ ai:
   batch_window_ms: 120000   # Wait 2 min to batch alerts before summarising
   cooldown_per_server_ms: 900000  # 15 min between summaries per server
 
+# Wazuh Agent Monitoring
+# Detects when agents go offline, disconnect, or stop sending keepalives.
+# Disabled by default — set enabled: true and provide your Wazuh manager URL.
+# The JWT is stored only in memory and refreshed every 10 minutes.
+wazuh:
+  enabled: false
+  manager_url: "https://wazuh.example.com:55000"
+  username: "wazuh-wui"
+  password: ""
+  poll_interval: "60s"
+  verify_ssl: true
+
 # Data Retention
 retention:
   metrics_days: 30
