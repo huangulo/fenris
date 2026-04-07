@@ -1,4 +1,4 @@
-export type View = 'overview' | 'server' | 'alerts' | 'containers' | 'uptime' | 'settings';
+export type View = 'overview' | 'server' | 'alerts' | 'containers' | 'uptime' | 'wazuh' | 'settings';
 
 export interface MetricRow {
   id: number;
@@ -106,4 +106,42 @@ export interface AppData {
   serverMetrics: MetricRow[];      // server detail (selected server, last 120)
   alerts:        AlertRow[];
   docker:        DockerSnapshot;   // current selected / all
+}
+
+export interface WazuhAgentRow {
+  id: number;
+  wazuh_id: string;
+  name: string;
+  ip_address: string | null;
+  status: 'active' | 'disconnected' | 'never_connected' | 'pending' | string;
+  os_name: string | null;
+  os_version: string | null;
+  agent_version: string | null;
+  last_keep_alive: string | null;
+  group_name: string | null;
+  first_seen: string;
+  last_seen: string;
+  last_status_change: string | null;
+  recent_alerts?: WazuhAgentAlert[];
+}
+
+export interface WazuhAgentAlert {
+  id: number;
+  severity: 'info' | 'warning' | 'critical';
+  message: string;
+  acknowledged: boolean;
+  created_at: string;
+}
+
+export interface WazuhStatus {
+  enabled: boolean;
+  total: number;
+  active: number;
+  disconnected: number;
+  never_connected: number;
+  pending: number;
+  last_poll_at: string | null;
+  last_poll_ok: boolean;
+  last_poll_error: string | null;
+  manager_url: string | null;
 }
