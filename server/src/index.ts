@@ -4,8 +4,9 @@ import env from '@fastify/env';
 import { readFileSync } from 'fs';
 import { load } from 'js-yaml';
 import { initDatabase, initializeTables, closeDatabase, query } from './db/client.js';
-import { initServices, healthCheck, receiveMetrics, listServers, getAllMetrics, getServerMetrics, listAlerts, acknowledgeAlert, getConfig, getDockerContainers, getDockerContainerHistory, getAlertSummary, listSummaries, sendTestAlert, getStatus, getServerStatus, listMonitors, createMonitor, updateMonitor, deleteMonitor, getMonitorChecks, testMonitorNow, setUptimeMonitor } from './api/routes.js';
+import { initServices, healthCheck, receiveMetrics, listServers, getAllMetrics, getServerMetrics, listAlerts, acknowledgeAlert, getConfig, getDockerContainers, getDockerContainerHistory, getAlertSummary, listSummaries, sendTestAlert, getStatus, getServerStatus, listMonitors, createMonitor, updateMonitor, deleteMonitor, getMonitorChecks, testMonitorNow, setUptimeMonitor, setWazuhMonitor, listWazuhAgents, getWazuhAgent, getWazuhStatus, testWazuhConnection } from './api/routes.js';
 import { UptimeMonitor } from './monitors/uptime.js';
+import { WazuhMonitor } from './monitors/wazuh.js';
 import { Predictor, parseDurationMs } from './engine/predictor.js';
 import { Summarizer } from './engine/summarizer.js';
 import { Config } from './types.js';
@@ -17,6 +18,7 @@ let retentionInterval: NodeJS.Timeout | null = null;
 let predictor: Predictor | null = null;
 let summarizer: Summarizer | null = null;
 let uptimeMonitor: UptimeMonitor | null = null;
+let wazuhMonitor:  WazuhMonitor  | null = null;
 
 async function loadConfig(): Promise<Config> {
   const configPath = process.env.FENRIS_CONFIG || '/app/fenris.yaml';
@@ -216,6 +218,12 @@ async function start(): Promise<void> {
     server.delete('/api/v1/monitors/:id', deleteMonitor);
     server.get('/api/v1/monitors/:id/checks', getMonitorChecks);
     server.post('/api/v1/monitors/:id/test', testMonitorNow);
+
+    // Wazuh routes (always registered; return 503 if disabled)
+    server.get('/api/v1/wazuh/agents', listWazuhAgents);
+    server.get('/api/v1/wazuh/agents/:id', getWazuhAgent);
+    server.get('/api/v1/wazuh/status', getWazuhStatus);
+    server.post('/api/v1/wazuh/test-connection', testWazuhConnection);
     
     // Graceful shutdown
     const signals = ['SIGINT', 'SIGTERM'];
@@ -227,6 +235,7 @@ async function start(): Promise<void> {
         predictor?.stop();
         summarizer?.stop();
         uptimeMonitor?.stop();
+        wazuhMonitor?.stop();
 
         await closeDatabase();
         await server.close();
@@ -274,6 +283,17 @@ async function start(): Promise<void> {
     uptimeMonitor = new UptimeMonitor(getDisp());
     setUptimeMonitor(uptimeMonitor);
     await uptimeMonitor.start();
+
+    // Start Wazuh monitor (only if enabled in config)
+    const wazuhCfg = config.wazuh;
+    if (wazuhCfg?.enabled) {
+      const { getDispatcher: getWazuhDisp } = await import('./api/routes.js');
+      wazuhMonitor = new WazuhMonitor(wazuhCfg, getWazuhDisp());
+      setWazuhMonitor(wazuhMonitor);
+      wazuhMonitor.start().catch(err => console.error('[wazuh] startup error:', err));
+    } else {
+      console.log('[wazuh] disabled — skipping');
+    }
     
   } catch (error) {
     console.error('Failed to start server:', error);
