@@ -143,4 +143,12 @@ export interface Config {
     batch_window_ms: number;   // how long to wait before summarising a batch
     cooldown_per_server_ms: number;
   };
+  wazuh?: {
+    enabled: boolean;
+    manager_url: string;
+    username: string;
+    password: string;
+    poll_interval: string;  // "60s"
+    verify_ssl: boolean;
+  };
 }
