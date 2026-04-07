@@ -1,5 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { apiFetch } from '../api';
+import { WazuhStatus } from '../types';
+import { fmtRelativeTime } from '../utils';
 
 interface SettingsPageProps {
   config: Record<string, unknown> | null;
@@ -101,6 +103,88 @@ function TestAlertPanel() {
   );
 }
 
+// ── Wazuh integration panel ───────────────────────────────────────────────────
+
+function WazuhPanel() {
+  const [status,  setStatus]  = useState<WazuhStatus | null>(null);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; agentCount?: number; error?: string } | null>(null);
+
+  useEffect(() => {
+    apiFetch('/api/v1/wazuh/status')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => setStatus(d))
+      .catch(() => {});
+  }, []);
+
+  const runTest = async () => {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const res = await apiFetch('/api/v1/wazuh/test-connection', { method: 'POST', body: '{}' });
+      setTestResult(await res.json());
+    } catch (e) {
+      setTestResult({ ok: false, error: (e as Error).message });
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  if (!status?.enabled) {
+    return (
+      <div className="card p-4 text-xs font-mono text-gray-500">
+        Wazuh integration is disabled. Set <code className="text-gray-400">wazuh.enabled: true</code> in fenris.yaml to activate.
+      </div>
+    );
+  }
+
+  return (
+    <div className="card p-4 space-y-3">
+      <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs font-mono">
+        <span className="text-gray-500">Connection</span>
+        <span className={status.last_poll_ok ? 'text-emerald-400' : 'text-red-400'}>
+          {status.last_poll_ok ? 'Connected' : 'Unreachable'}
+        </span>
+
+        <span className="text-gray-500">Manager URL</span>
+        <span className="text-gray-300 truncate">{status.manager_url ?? '—'}</span>
+
+        <span className="text-gray-500">Last Successful Poll</span>
+        <span className="text-gray-300">
+          {status.last_poll_at ? fmtRelativeTime(status.last_poll_at) : '—'}
+        </span>
+
+        <span className="text-gray-500">Agents Monitored</span>
+        <span className="text-gray-300">{status.total}</span>
+
+        {status.last_poll_error && (
+          <>
+            <span className="text-gray-500">Last Error</span>
+            <span className="text-red-400 text-[10px]">{status.last_poll_error}</span>
+          </>
+        )}
+      </div>
+
+      <button
+        onClick={runTest}
+        disabled={testing}
+        className="text-xs font-mono bg-violet-500/10 hover:bg-violet-500/20 disabled:opacity-50 text-violet-400 border border-violet-500/30 rounded-lg px-4 py-1.5 transition-colors flex items-center gap-2"
+      >
+        {testing && <span className="w-3 h-3 rounded-full border border-violet-400 border-t-transparent animate-spin" />}
+        Test Connection
+      </button>
+
+      {testResult && (
+        <p className={`text-xs font-mono ${testResult.ok ? 'text-emerald-400' : 'text-red-400'}`}>
+          {testResult.ok
+            ? `Connected — ${testResult.agentCount} agent(s) reachable`
+            : `Failed: ${testResult.error}`}
+        </p>
+      )}
+    </div>
+  );
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export function SettingsPage({ config }: SettingsPageProps) {
@@ -111,6 +195,11 @@ export function SettingsPage({ config }: SettingsPageProps) {
       {/* Alert channel test */}
       <Section title="Alert Channels">
         <TestAlertPanel />
+      </Section>
+
+      {/* Wazuh integration */}
+      <Section title="Wazuh Integration">
+        <WazuhPanel />
       </Section>
 
       {/* Server config */}

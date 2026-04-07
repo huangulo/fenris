@@ -9,6 +9,7 @@ import { AlertsPage } from './pages/AlertsPage';
 import { ContainersPage } from './pages/ContainersPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { UptimePage } from './pages/UptimePage';
+import { WazuhPage } from './pages/WazuhPage';
 
 const REFRESH_MS = 30_000;
 
@@ -27,6 +28,7 @@ export default function App() {
   const [serverDocker,  setServerDocker]  = useState<DockerSnapshot>({ containers: [], timestamp: null });
   const [serverConfig,  setServerConfig]  = useState<Record<string, unknown> | null>(null);
   const [summaries,     setSummaries]     = useState<SummaryRow[]>([]);
+  const [wazuhEnabled,  setWazuhEnabled]  = useState(false);
 
   // ── UI state ────────────────────────────────────────────────────────────────
   const [loading,      setLoading]      = useState(true);
@@ -91,6 +93,16 @@ export default function App() {
     } catch { /* silent */ }
   }, []);
 
+  const checkWazuhEnabled = useCallback(async () => {
+    try {
+      const res = await apiFetch('/api/v1/wazuh/status');
+      if (res.ok) {
+        const data = await res.json() as { enabled?: boolean };
+        setWazuhEnabled(data.enabled ?? false);
+      }
+    } catch { /* silent */ }
+  }, []);
+
   const fetchSummaries = useCallback(async (serverId?: number) => {
     try {
       const url = serverId != null
@@ -127,9 +139,10 @@ export default function App() {
   // Initial load + 30s poll
   useEffect(() => {
     refreshAll();
+    checkWazuhEnabled();
     const t = setInterval(refreshAll, REFRESH_MS);
     return () => clearInterval(t);
-  }, [refreshAll]);
+  }, [refreshAll, checkWazuhEnabled]);
 
   // When a server is selected (server detail view), fetch its specific data
   useEffect(() => {
@@ -228,6 +241,8 @@ export default function App() {
         );
       case 'uptime':
         return <UptimePage />;
+      case 'wazuh':
+        return <WazuhPage />;
       case 'settings':
         return <SettingsPage config={serverConfig} />;
       default:
@@ -243,6 +258,7 @@ export default function App() {
         activeAlerts={activeAlerts}
         collapsed={sidebarCollapsed}
         onToggleCollapse={() => setSidebarCollapsed(c => !c)}
+        wazuhEnabled={wazuhEnabled}
       />
 
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
