@@ -3,6 +3,7 @@ import { query } from '../db/client.js';
 import { AnomalyDetector } from '../engine/anomaly.js';
 import { AlertDispatcher, TestResult } from '../alerts/dispatcher.js';
 import { Summarizer } from '../engine/summarizer.js';
+import { attachAlertToIncident, autoResolveIncident } from '../engine/incidents.js';
 import { UptimeMonitor, MonitorConfig } from '../monitors/uptime.js';
 import { WazuhMonitor } from '../monitors/wazuh.js';
 import { Metric, Alert, ContainerStats, Config } from '../types.js';
@@ -203,6 +204,11 @@ export async function ingestMetrics(metrics: Metric[]): Promise<{ anomaliesDetec
     alert.id = alertResult.rows[0].id;
     await dispatcher.dispatchAlert(alert);
     summarizer?.enqueue(alert);
+    // Attach to incident (fire-and-forget — never blocks alert delivery)
+    attachAlertToIncident(
+      alert.id, alert.server_id, alert.severity,
+      alert.metric_type ?? metricType, alert.message
+    );
   }
 
   return { anomaliesDetected: anomalyResults.size };
@@ -463,7 +469,12 @@ export async function acknowledgeAlert(request: FastifyRequest<{ Params: { id: s
       return reply.status(404).send({ error: 'Alert not found' });
     }
 
-    return reply.send(result.rows[0]);
+    const alert = result.rows[0];
+    if (alert.incident_id) {
+      autoResolveIncident(alert.incident_id);
+    }
+
+    return reply.send(alert);
   } catch (error) {
     console.error('Error acknowledging alert:', error);
     return reply.status(500).send({ error: 'Failed to acknowledge alert' });
@@ -564,13 +575,18 @@ export async function getConfig(request: FastifyRequest, reply: FastifyReply): P
 
 export async function getStatus(_request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> {
   try {
-    const [serversRes, dockerRes, monitorsRes, alertsRes] = await Promise.all([
+    const [serversRes, dockerRes, monitorsRes, alertsRes, incidentsRes] = await Promise.all([
       query('SELECT COUNT(*) AS total, COUNT(last_heartbeat) FILTER (WHERE last_heartbeat > NOW() - INTERVAL \'90 seconds\') AS online FROM servers'),
       query(`SELECT DISTINCT ON (server_id) value->'docker' AS containers
              FROM metrics WHERE metric_type = 'docker'
              ORDER BY server_id, timestamp DESC`),
       query('SELECT is_up FROM (SELECT DISTINCT ON (monitor_id) is_up FROM monitor_checks ORDER BY monitor_id, checked_at DESC) sub'),
       query('SELECT COUNT(*) AS total FROM alerts WHERE acknowledged = FALSE'),
+      query(`SELECT
+               COUNT(*) FILTER (WHERE state = 'new')           AS incidents_new,
+               COUNT(*) FILTER (WHERE state = 'investigating') AS incidents_investigating,
+               COUNT(*) FILTER (WHERE state = 'resolved' AND resolved_at > NOW() - INTERVAL '24 hours') AS incidents_resolved_today
+             FROM incidents`),
     ]);
 
     const serversTotal  = parseInt(serversRes.rows[0]?.total ?? '0');
@@ -599,16 +615,22 @@ export async function getStatus(_request: FastifyRequest, reply: FastifyReply): 
     }
 
     const activeAlerts = parseInt(alertsRes.rows[0]?.total ?? '0');
+    const incidentsNew          = parseInt(incidentsRes.rows[0]?.incidents_new ?? '0');
+    const incidentsInvestigating = parseInt(incidentsRes.rows[0]?.incidents_investigating ?? '0');
+    const incidentsResolvedToday = parseInt(incidentsRes.rows[0]?.incidents_resolved_today ?? '0');
 
     return reply.send({
-      servers_online:      serversOnline,
-      servers_total:       serversTotal,
-      containers_running:  containersRunning,
-      containers_total:    containersTotal,
-      monitors_up:         monitorsUp,
-      monitors_total:      monitorsTotal,
-      active_alerts:       activeAlerts,
-      uptime_percentage:   uptimePct,
+      servers_online:           serversOnline,
+      servers_total:            serversTotal,
+      containers_running:       containersRunning,
+      containers_total:         containersTotal,
+      monitors_up:              monitorsUp,
+      monitors_total:           monitorsTotal,
+      active_alerts:            activeAlerts,
+      uptime_percentage:        uptimePct,
+      incidents_new:            incidentsNew,
+      incidents_investigating:  incidentsInvestigating,
+      incidents_resolved_today: incidentsResolvedToday,
     });
   } catch (error) {
     console.error('Error building status:', error);
@@ -942,4 +964,274 @@ export async function testWazuhConnection(
   }
   const result = await wazuhMonitor.testConnection();
   return reply.send(result);
+}
+
+// ── Incidents endpoints ───────────────────────────────────────────────────────
+
+const INCIDENT_LIST_SQL = `
+  SELECT
+    i.*,
+    s.name AS server_name,
+    asm.summary AS ai_summary,
+    (
+      SELECT json_agg(sub ORDER BY sub.created_at DESC)
+      FROM (
+        SELECT a.id, a.severity, a.message, a.metric_type, a.acknowledged, a.created_at
+        FROM alerts a WHERE a.incident_id = i.id ORDER BY a.created_at DESC LIMIT 3
+      ) sub
+    ) AS recent_alerts
+  FROM incidents i
+  LEFT JOIN servers s ON s.id = i.server_id
+  LEFT JOIN alert_summaries asm ON asm.id = i.ai_summary_id
+`;
+
+export async function listIncidents(request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> {
+  try {
+    const { state, server_id, limit: limitParam } = request.query as Record<string, string>;
+    const limit = Math.min(parseInt(limitParam ?? '100'), 500);
+
+    const conditions: string[] = [];
+    const params: unknown[]    = [];
+
+    if (state)     { params.push(state);            conditions.push(`i.state = $${params.length}`); }
+    if (server_id) { params.push(parseInt(server_id)); conditions.push(`i.server_id = $${params.length}`); }
+
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    params.push(limit);
+    const sql = `${INCIDENT_LIST_SQL} ${where} ORDER BY i.started_at DESC LIMIT $${params.length}`;
+    const result = await query(sql, params);
+    return reply.send(result.rows);
+  } catch (err) {
+    console.error('[incidents] list error:', err);
+    return reply.status(500).send({ error: 'Failed to list incidents' });
+  }
+}
+
+export async function getIncident(
+  request: FastifyRequest<{ Params: { id: string } }>,
+  reply: FastifyReply
+): Promise<FastifyReply> {
+  try {
+    const id = parseInt(request.params.id);
+    const incRes = await query(
+      `${INCIDENT_LIST_SQL} WHERE i.id = $1`,
+      [id]
+    );
+    if (incRes.rows.length === 0) return reply.status(404).send({ error: 'Incident not found' });
+
+    const incident = incRes.rows[0];
+    // Fetch all attached alerts
+    const alertsRes = await query(
+      `SELECT a.*, s.name AS server_name
+       FROM alerts a LEFT JOIN servers s ON s.id = a.server_id
+       WHERE a.incident_id = $1 ORDER BY a.created_at DESC`,
+      [id]
+    );
+    incident.alerts = alertsRes.rows;
+    return reply.send(incident);
+  } catch (err) {
+    console.error('[incidents] get error:', err);
+    return reply.status(500).send({ error: 'Failed to get incident' });
+  }
+}
+
+export async function claimIncident(
+  request: FastifyRequest<{ Params: { id: string }; Body: { claimed_by?: string } }>,
+  reply: FastifyReply
+): Promise<FastifyReply> {
+  try {
+    const id         = parseInt(request.params.id);
+    const claimedBy  = request.body?.claimed_by ?? 'you';
+    const result = await query(
+      `UPDATE incidents
+       SET state = 'investigating', claimed_by = $1, claimed_at = NOW(), updated_at = NOW()
+       WHERE id = $2 RETURNING *`,
+      [claimedBy, id]
+    );
+    if (result.rows.length === 0) return reply.status(404).send({ error: 'Incident not found' });
+    return reply.send(result.rows[0]);
+  } catch (err) {
+    console.error('[incidents] claim error:', err);
+    return reply.status(500).send({ error: 'Failed to claim incident' });
+  }
+}
+
+export async function resolveIncident(
+  request: FastifyRequest<{ Params: { id: string } }>,
+  reply: FastifyReply
+): Promise<FastifyReply> {
+  try {
+    const id = parseInt(request.params.id);
+    // Auto-acknowledge all attached alerts
+    await query(
+      'UPDATE alerts SET acknowledged = TRUE WHERE incident_id = $1 AND acknowledged = FALSE',
+      [id]
+    );
+    const result = await query(
+      `UPDATE incidents
+       SET state = 'resolved', resolved_at = NOW(), updated_at = NOW()
+       WHERE id = $1 RETURNING *`,
+      [id]
+    );
+    if (result.rows.length === 0) return reply.status(404).send({ error: 'Incident not found' });
+    return reply.send(result.rows[0]);
+  } catch (err) {
+    console.error('[incidents] resolve error:', err);
+    return reply.status(500).send({ error: 'Failed to resolve incident' });
+  }
+}
+
+export async function reopenIncident(
+  request: FastifyRequest<{ Params: { id: string } }>,
+  reply: FastifyReply
+): Promise<FastifyReply> {
+  try {
+    const id = parseInt(request.params.id);
+    const result = await query(
+      `UPDATE incidents
+       SET state = 'new', resolved_at = NULL, claimed_by = NULL, claimed_at = NULL, updated_at = NOW()
+       WHERE id = $1 RETURNING *`,
+      [id]
+    );
+    if (result.rows.length === 0) return reply.status(404).send({ error: 'Incident not found' });
+    return reply.send(result.rows[0]);
+  } catch (err) {
+    console.error('[incidents] reopen error:', err);
+    return reply.status(500).send({ error: 'Failed to reopen incident' });
+  }
+}
+
+export async function updateIncident(
+  request: FastifyRequest<{ Params: { id: string }; Body: { title?: string; notes?: string } }>,
+  reply: FastifyReply
+): Promise<FastifyReply> {
+  try {
+    const id    = parseInt(request.params.id);
+    const { title, notes } = request.body ?? {};
+
+    const sets: string[]    = ['updated_at = NOW()'];
+    const params: unknown[] = [];
+    if (title !== undefined) { params.push(title); sets.push(`title = $${params.length}`); }
+    if (notes !== undefined) { params.push(notes); sets.push(`notes = $${params.length}`); }
+
+    params.push(id);
+    const result = await query(
+      `UPDATE incidents SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING *`,
+      params
+    );
+    if (result.rows.length === 0) return reply.status(404).send({ error: 'Incident not found' });
+    return reply.send(result.rows[0]);
+  } catch (err) {
+    console.error('[incidents] update error:', err);
+    return reply.status(500).send({ error: 'Failed to update incident' });
+  }
+}
+
+export async function mergeIncidents(
+  request: FastifyRequest<{ Params: { id: string }; Body: { target_incident_id: number } }>,
+  reply: FastifyReply
+): Promise<FastifyReply> {
+  try {
+    const sourceId = parseInt(request.params.id);
+    const targetId = request.body?.target_incident_id;
+    if (!targetId) return reply.status(400).send({ error: 'target_incident_id required' });
+    if (sourceId === targetId) return reply.status(400).send({ error: 'Cannot merge incident with itself' });
+
+    // Move alerts from source to target
+    await query('UPDATE alerts SET incident_id = $1 WHERE incident_id = $2', [targetId, sourceId]);
+
+    // Recalculate target severity + alert_count
+    const statsRes = await query(
+      `SELECT COUNT(*) AS cnt,
+              MAX(CASE severity WHEN 'critical' THEN 3 WHEN 'warning' THEN 2 ELSE 1 END) AS sev_rank
+       FROM alerts WHERE incident_id = $1`,
+      [targetId]
+    );
+    const alertCount = parseInt(statsRes.rows[0]?.cnt ?? '0');
+    const sevRank    = parseInt(statsRes.rows[0]?.sev_rank ?? '1');
+    const severity   = sevRank === 3 ? 'critical' : sevRank === 2 ? 'warning' : 'info';
+
+    await query(
+      'UPDATE incidents SET alert_count = $1, severity = $2, updated_at = NOW() WHERE id = $3',
+      [alertCount, severity, targetId]
+    );
+
+    // Delete source incident
+    await query('DELETE FROM incidents WHERE id = $1', [sourceId]);
+
+    const targetRes = await query('SELECT * FROM incidents WHERE id = $1', [targetId]);
+    return reply.send(targetRes.rows[0]);
+  } catch (err) {
+    console.error('[incidents] merge error:', err);
+    return reply.status(500).send({ error: 'Failed to merge incidents' });
+  }
+}
+
+export async function splitIncident(
+  request: FastifyRequest<{ Params: { id: string }; Body: { alert_ids: number[] } }>,
+  reply: FastifyReply
+): Promise<FastifyReply> {
+  try {
+    const sourceId = parseInt(request.params.id);
+    const alertIds = request.body?.alert_ids;
+    if (!Array.isArray(alertIds) || alertIds.length === 0) {
+      return reply.status(400).send({ error: 'alert_ids array required' });
+    }
+
+    // Verify these alerts belong to this incident
+    const checkRes = await query(
+      'SELECT id FROM alerts WHERE id = ANY($1) AND incident_id = $2',
+      [alertIds, sourceId]
+    );
+    if (checkRes.rows.length === 0) {
+      return reply.status(400).send({ error: 'None of the specified alerts belong to this incident' });
+    }
+    const validIds = checkRes.rows.map(r => r.id);
+
+    // Get source incident info
+    const srcRes = await query('SELECT * FROM incidents WHERE id = $1', [sourceId]);
+    if (srcRes.rows.length === 0) return reply.status(404).send({ error: 'Incident not found' });
+    const src = srcRes.rows[0];
+
+    // Get severity for the split set
+    const splitSevRes = await query(
+      `SELECT MAX(CASE severity WHEN 'critical' THEN 3 WHEN 'warning' THEN 2 ELSE 1 END) AS sev_rank
+       FROM alerts WHERE id = ANY($1)`,
+      [validIds]
+    );
+    const sevRank    = parseInt(splitSevRes.rows[0]?.sev_rank ?? '1');
+    const severity   = sevRank === 3 ? 'critical' : sevRank === 2 ? 'warning' : 'info';
+
+    // Create new incident
+    const newTitle = `Split from: ${src.title}`;
+    const newRes = await query(
+      `INSERT INTO incidents (title, server_id, severity, state, started_at, alert_count, created_at, updated_at)
+       VALUES ($1, $2, $3, 'new', NOW(), $4, NOW(), NOW()) RETURNING *`,
+      [newTitle, src.server_id, severity, validIds.length]
+    );
+    const newIncident = newRes.rows[0];
+
+    // Move alerts
+    await query('UPDATE alerts SET incident_id = $1 WHERE id = ANY($2)', [newIncident.id, validIds]);
+
+    // Update source incident counts
+    const remainRes = await query(
+      `SELECT COUNT(*) AS cnt,
+              COALESCE(MAX(CASE severity WHEN 'critical' THEN 3 WHEN 'warning' THEN 2 ELSE 1 END), 1) AS sev_rank
+       FROM alerts WHERE incident_id = $1`,
+      [sourceId]
+    );
+    const remCount   = parseInt(remainRes.rows[0]?.cnt ?? '0');
+    const remSevRank = parseInt(remainRes.rows[0]?.sev_rank ?? '1');
+    const remSev     = remSevRank === 3 ? 'critical' : remSevRank === 2 ? 'warning' : 'info';
+    await query(
+      'UPDATE incidents SET alert_count = $1, severity = $2, updated_at = NOW() WHERE id = $3',
+      [remCount, remSev, sourceId]
+    );
+
+    return reply.status(201).send(newIncident);
+  } catch (err) {
+    console.error('[incidents] split error:', err);
+    return reply.status(500).send({ error: 'Failed to split incident' });
+  }
 }
