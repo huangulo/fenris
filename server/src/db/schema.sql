@@ -137,6 +137,41 @@ CREATE TABLE IF NOT EXISTS wazuh_agents (
 
 CREATE INDEX IF NOT EXISTS idx_wazuh_agents_status ON wazuh_agents(status);
 
+-- ── Incidents ──────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS incidents (
+  id            SERIAL PRIMARY KEY,
+  title         VARCHAR(500) NOT NULL,
+  server_id     INTEGER REFERENCES servers(id) ON DELETE SET NULL,
+  severity      VARCHAR(20)  NOT NULL CHECK (severity IN ('info','warning','critical')),
+  state         VARCHAR(20)  NOT NULL DEFAULT 'new' CHECK (state IN ('new','investigating','resolved')),
+  started_at    TIMESTAMP    NOT NULL DEFAULT NOW(),
+  resolved_at   TIMESTAMP,
+  claimed_by    VARCHAR(100),
+  claimed_at    TIMESTAMP,
+  alert_count   INTEGER      DEFAULT 0,
+  ai_summary_id INTEGER      REFERENCES alert_summaries(id) ON DELETE SET NULL,
+  notes         TEXT,
+  created_at    TIMESTAMP    DEFAULT NOW(),
+  updated_at    TIMESTAMP    DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_incidents_state      ON incidents(state);
+CREATE INDEX IF NOT EXISTS idx_incidents_server_id  ON incidents(server_id);
+CREATE INDEX IF NOT EXISTS idx_incidents_started_at ON incidents(started_at DESC);
+
+-- Add incident_id to alerts (idempotent)
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'alerts' AND column_name = 'incident_id'
+  ) THEN
+    ALTER TABLE alerts ADD COLUMN incident_id INTEGER REFERENCES incidents(id) ON DELETE SET NULL;
+  END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_alerts_incident_id ON alerts(incident_id);
+
 -- Trigger for automatic timestamp updates
 CREATE OR REPLACE FUNCTION update_timestamp()
 RETURNS TRIGGER AS $$
