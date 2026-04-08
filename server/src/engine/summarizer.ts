@@ -128,6 +128,28 @@ export class Summarizer {
         [summaryId, alertIds]
       );
 
+      // Link summary to the incident that owns these alerts (if any)
+      // Also update incident title to first line of AI summary
+      try {
+        const incRes = await query(
+          `SELECT DISTINCT incident_id FROM alerts
+           WHERE id = ANY($1) AND incident_id IS NOT NULL LIMIT 1`,
+          [alertIds]
+        );
+        if (incRes.rows.length > 0) {
+          const incidentId = incRes.rows[0].incident_id;
+          // Use first non-empty line of the summary as a short title (max 120 chars)
+          const firstLine = summary.split('\n').find(l => l.trim().length > 0)?.trim() ?? summary;
+          const newTitle = firstLine.length > 120 ? firstLine.slice(0, 117) + '…' : firstLine;
+          await query(
+            `UPDATE incidents SET ai_summary_id = $1, title = $2, updated_at = NOW() WHERE id = $3`,
+            [summaryId, newTitle, incidentId]
+          );
+        }
+      } catch (linkErr) {
+        console.warn('[summarizer] failed to link summary to incident:', linkErr);
+      }
+
       console.log(`[summarizer] summary #${summaryId} created for server ${serverName} (${alertIds.length} alerts)`);
     } catch (err) {
       console.error('[summarizer] error creating summary:', err);
