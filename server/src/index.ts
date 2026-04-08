@@ -4,7 +4,8 @@ import env from '@fastify/env';
 import { readFileSync } from 'fs';
 import { load } from 'js-yaml';
 import { initDatabase, initializeTables, closeDatabase, query } from './db/client.js';
-import { initServices, healthCheck, receiveMetrics, listServers, getAllMetrics, getServerMetrics, listAlerts, acknowledgeAlert, getConfig, getDockerContainers, getDockerContainerHistory, getAlertSummary, listSummaries, sendTestAlert, getStatus, getServerStatus, listMonitors, createMonitor, updateMonitor, deleteMonitor, getMonitorChecks, testMonitorNow, setUptimeMonitor, setWazuhMonitor, listWazuhAgents, getWazuhAgent, getWazuhStatus, testWazuhConnection } from './api/routes.js';
+import { initServices, healthCheck, receiveMetrics, listServers, getAllMetrics, getServerMetrics, listAlerts, acknowledgeAlert, getConfig, getDockerContainers, getDockerContainerHistory, getAlertSummary, listSummaries, sendTestAlert, getStatus, getServerStatus, listMonitors, createMonitor, updateMonitor, deleteMonitor, getMonitorChecks, testMonitorNow, setUptimeMonitor, setWazuhMonitor, listWazuhAgents, getWazuhAgent, getWazuhStatus, testWazuhConnection, listIncidents, getIncident, claimIncident, resolveIncident, reopenIncident, updateIncident, mergeIncidents, splitIncident } from './api/routes.js';
+import { backfillIncidents } from './engine/incidents.js';
 import { UptimeMonitor } from './monitors/uptime.js';
 import { WazuhMonitor } from './monitors/wazuh.js';
 import { Predictor, parseDurationMs } from './engine/predictor.js';
@@ -146,6 +147,9 @@ async function start(): Promise<void> {
     initDatabase(config.server);
     await initializeTables();
     
+    // Run one-time incident backfill (no-op if incidents already populated)
+    backfillIncidents().catch(err => console.error('[incidents] backfill startup error:', err));
+
     // Initialize services (must come before predictor/summarizer which need dispatcher)
     initServices(config);
     
@@ -218,6 +222,16 @@ async function start(): Promise<void> {
     server.delete('/api/v1/monitors/:id', deleteMonitor);
     server.get('/api/v1/monitors/:id/checks', getMonitorChecks);
     server.post('/api/v1/monitors/:id/test', testMonitorNow);
+
+    // Incident routes
+    server.get('/api/v1/incidents', listIncidents);
+    server.get('/api/v1/incidents/:id', getIncident);
+    server.post('/api/v1/incidents/:id/claim', claimIncident);
+    server.post('/api/v1/incidents/:id/resolve', resolveIncident);
+    server.post('/api/v1/incidents/:id/reopen', reopenIncident);
+    server.put('/api/v1/incidents/:id', updateIncident);
+    server.post('/api/v1/incidents/:id/merge', mergeIncidents);
+    server.post('/api/v1/incidents/:id/split', splitIncident);
 
     // Wazuh routes (always registered; return 503 if disabled)
     server.get('/api/v1/wazuh/agents', listWazuhAgents);
