@@ -10,6 +10,8 @@ interface OverviewPageProps {
   alerts:         AlertRow[];
   docker:         DockerSnapshot;
   onSelectServer: (id: number) => void;
+  incidentsNew?:         number;
+  incidentsInvestigating?: number;
 }
 
 // ── Build per-server sparkline arrays from the bulk metrics fetch ──────────────
@@ -165,7 +167,7 @@ function ServerCard({ server, sparklines, containers, alertCount, onClick }: Ser
 
 // ── Overview page ─────────────────────────────────────────────────────────────
 
-export function OverviewPage({ servers, allMetrics, alerts, docker, onSelectServer }: OverviewPageProps) {
+export function OverviewPage({ servers, allMetrics, alerts, docker, onSelectServer, incidentsNew = 0, incidentsInvestigating = 0 }: OverviewPageProps) {
   const sparklineMap    = useMemo(() => buildSparklines(allMetrics),     [allMetrics]);
   const containerMap    = useMemo(() => buildContainerCounts(allMetrics), [allMetrics]);
 
@@ -222,9 +224,12 @@ export function OverviewPage({ servers, allMetrics, alerts, docker, onSelectServ
             accent="text-cyan-400"
           />
           <StatPill
-            label="Active alerts"
-            value={activeAlerts}
-            accent={activeAlerts > 0 ? 'text-red-400' : 'text-emerald-400'}
+            label="Active incidents"
+            value={incidentsNew + incidentsInvestigating}
+            sub={incidentsNew > 0 || incidentsInvestigating > 0
+              ? `${incidentsNew} new · ${incidentsInvestigating} investigating`
+              : undefined}
+            accent={(incidentsNew + incidentsInvestigating) > 0 ? 'text-orange-400' : 'text-emerald-400'}
           />
         </div>
       </div>

@@ -55,6 +55,13 @@ const IconShield = () => (
   </svg>
 );
 
+const IconFire = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M12 2c0 0-5 4.5-5 9.5a5 5 0 0010 0c0-2-1-3.5-2-4.5 0 2-1 3-2 3s-2-1-2-2.5c0-2 1.5-4 1-5.5z"/>
+    <path d="M12 22c-2.5 0-4-1.5-4-3.5 0-1 .5-2 1.5-2.5-.5 1 0 2 1 2.5.5-1.5.5-3 1.5-4 .5 1.5 1.5 2.5 1.5 4 1-1 1.5-2 1.5-2.5C16 17 16.5 18 16.5 19c0 2-1.5 3-4.5 3z"/>
+  </svg>
+);
+
 const IconChevron = ({ right }: { right?: boolean }) => (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     {right ? <polyline points="9 18 15 12 9 6"/> : <polyline points="15 18 9 12 15 6"/>}
@@ -74,6 +81,7 @@ interface SidebarProps {
   view: View;
   onNavigate: (v: View) => void;
   activeAlerts: number;
+  activeIncidents?: number;
   collapsed: boolean;
   onToggleCollapse: () => void;
   wazuhEnabled?: boolean;
@@ -81,8 +89,9 @@ interface SidebarProps {
 
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 
-export function Sidebar({ view, onNavigate, activeAlerts, collapsed, onToggleCollapse, wazuhEnabled }: SidebarProps) {
+export function Sidebar({ view, onNavigate, activeAlerts, activeIncidents = 0, collapsed, onToggleCollapse, wazuhEnabled }: SidebarProps) {
   const navItems: NavItem[] = [
+    { id: 'incidents',   label: 'Incidents',   icon: <IconFire />, badge: activeIncidents },
     { id: 'overview',    label: 'Overview',    icon: <IconGrid /> },
     { id: 'server',      label: 'Servers',     icon: <IconServer /> },
     { id: 'containers',  label: 'Containers',  icon: <IconCube /> },
