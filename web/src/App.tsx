@@ -10,12 +10,13 @@ import { ContainersPage } from './pages/ContainersPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { UptimePage } from './pages/UptimePage';
 import { WazuhPage } from './pages/WazuhPage';
+import { IncidentsPage } from './pages/IncidentsPage';
 
 const REFRESH_MS = 30_000;
 
 export default function App() {
   // ── Navigation ──────────────────────────────────────────────────────────────
-  const [view, setView]                     = useState<View>('overview');
+  const [view, setView]                     = useState<View>('incidents');
   const [selectedServerId, setSelectedServerId] = useState<number | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
@@ -181,6 +182,9 @@ export default function App() {
   // ── Derived ──────────────────────────────────────────────────────────────────
   const activeAlerts = alerts.filter(a => !a.acknowledged).length;
   const selectedServer = servers.find(s => s.id === selectedServerId) ?? null;
+  // Incident counts come from the IncidentsPage itself via its own fetch;
+  // pass activeAlerts as fallback badge for the sidebar until we have a global count.
+  const [activeIncidentCount, setActiveIncidentCount] = useState(0);
 
   // ── Loading screen ───────────────────────────────────────────────────────────
   if (loading) {
@@ -197,6 +201,13 @@ export default function App() {
   // ── Page content ─────────────────────────────────────────────────────────────
   const renderPage = () => {
     switch (view) {
+      case 'incidents':
+        return (
+          <IncidentsPage
+            servers={servers}
+            onActiveCountChange={setActiveIncidentCount}
+          />
+        );
       case 'overview':
         return (
           <OverviewPage
@@ -205,6 +216,7 @@ export default function App() {
             alerts={alerts}
             docker={docker}
             onSelectServer={(id) => navigateTo('server', id)}
+            incidentsNew={activeIncidentCount}
           />
         );
       case 'server':
@@ -256,6 +268,7 @@ export default function App() {
         view={view}
         onNavigate={navigateTo}
         activeAlerts={activeAlerts}
+        activeIncidents={activeIncidentCount}
         collapsed={sidebarCollapsed}
         onToggleCollapse={() => setSidebarCollapsed(c => !c)}
         wazuhEnabled={wazuhEnabled}

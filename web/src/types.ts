@@ -1,4 +1,4 @@
-export type View = 'overview' | 'server' | 'alerts' | 'containers' | 'uptime' | 'wazuh' | 'settings';
+export type View = 'incidents' | 'overview' | 'server' | 'alerts' | 'containers' | 'uptime' | 'wazuh' | 'settings';
 
 export interface MetricRow {
   id: number;
@@ -106,6 +106,27 @@ export interface AppData {
   serverMetrics: MetricRow[];      // server detail (selected server, last 120)
   alerts:        AlertRow[];
   docker:        DockerSnapshot;   // current selected / all
+}
+
+export interface IncidentRow {
+  id:             number;
+  title:          string;
+  server_id:      number | null;
+  server_name:    string | null;
+  severity:       'info' | 'warning' | 'critical';
+  state:          'new' | 'investigating' | 'resolved';
+  started_at:     string;
+  resolved_at:    string | null;
+  claimed_by:     string | null;
+  claimed_at:     string | null;
+  alert_count:    number;
+  ai_summary_id:  number | null;
+  ai_summary:     string | null;
+  notes:          string | null;
+  created_at:     string;
+  updated_at:     string;
+  recent_alerts?: AlertRow[];
+  alerts?:        AlertRow[];
 }
 
 export interface WazuhAgentRow {
