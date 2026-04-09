@@ -153,8 +153,8 @@ const IconShieldLock = () => (
 
 export function Sidebar({ view, onNavigate, activeAlerts, activeIncidents = 0, collapsed, onToggleCollapse, wazuhEnabled, crowdSecEnabled }: SidebarProps) {
   const navItems: NavItem[] = [
-    { id: 'incidents',   label: 'Incidents',   icon: <IconFire />, badge: activeIncidents },
     { id: 'overview',    label: 'Overview',    icon: <IconGrid /> },
+    { id: 'incidents',   label: 'Incidents',   icon: <IconFire />, badge: activeIncidents },
     { id: 'server',      label: 'Servers',     icon: <IconServer /> },
     { id: 'containers',  label: 'Containers',  icon: <IconCube /> },
     { id: 'uptime',      label: 'Uptime',      icon: <IconHeartbeat /> },
