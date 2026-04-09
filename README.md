@@ -206,6 +206,101 @@ logging:
 
 ---
 
+## Integrations
+
+### Wazuh
+
+Fenris polls the Wazuh Manager REST API to pull agent status and security alerts into the dashboard. Each Wazuh agent can be linked to a Fenris server so security events appear alongside infrastructure metrics.
+
+#### Prerequisites
+
+- Wazuh Manager 4.x with the REST API enabled (default port **55000**)
+- A Wazuh API user with at least read permissions (`agents:read`, `alerts:read`)
+
+#### Configuration
+
+Add a `wazuh:` block to `fenris.yaml`:
+
+```yaml
+wazuh:
+  enabled: true
+  url: "https://your-wazuh-manager:55000"
+  username: "wazuh-api-user"
+  password: "your-password"
+  poll_interval: "5m"        # how often to refresh agent list and alerts
+  verify_ssl: false          # set true if your Wazuh TLS cert is trusted
+```
+
+#### Agent matching
+
+Fenris links Wazuh agents to Fenris servers by comparing the Wazuh agent name against the Fenris server name (case-insensitive). If the names differ, go to **Settings → Servers**, edit the server, and set the **Wazuh Agent Name** field to the exact name shown in the Wazuh console.
+
+---
+
+### CrowdSec
+
+Fenris integrates with the CrowdSec Local API (LAPI) to display active IP bans, captchas, and other decisions on the CrowdSec dashboard page. Source countries are resolved automatically from the bundled MaxMind GeoLite2 database (no external API calls).
+
+#### Credential type — bouncer, not machine
+
+CrowdSec uses two credential classes:
+
+| Type | Command | Endpoint access |
+|---|---|---|
+| **Bouncer** | `cscli bouncers add` | `/v1/decisions/stream` ✓ |
+| Machine | `cscli machines add` | `/v1/decisions` — returns **403** for bouncers |
+
+Fenris uses **`/v1/decisions/stream`**, which requires a **bouncer** API key. Using a machine credential will produce a 403 error.
+
+#### Generating the API key
+
+**Bare-metal / systemd install:**
+```sh
+sudo cscli bouncers add fenris
+```
+
+**Docker install** (CrowdSec running in a container):
+```sh
+docker exec crowdsec cscli bouncers add fenris
+```
+
+Both commands print a key — copy it immediately, it is not shown again.
+
+#### Configuration
+
+Add a `crowdsec:` block to `fenris.yaml`. The `name` field must match a Fenris server name **exactly** (case-insensitive) so decisions are linked to the correct server in the dashboard:
+
+```yaml
+crowdsec:
+  enabled: true
+  poll_interval: "60s"      # how often to poll /v1/decisions/stream
+  instances:
+    - name: "my-server"     # must match the Fenris server name exactly
+      url: "http://127.0.0.1:8080"
+      api_key: "abc123..."  # bouncer key from cscli bouncers add
+```
+
+Multiple instances (one per CrowdSec LAPI host) are supported:
+
+```yaml
+crowdsec:
+  enabled: true
+  poll_interval: "60s"
+  instances:
+    - name: "web-01"
+      url: "http://192.168.1.10:8080"
+      api_key: "key-for-web-01"
+    - name: "web-02"
+      url: "http://192.168.1.11:8080"
+      api_key: "key-for-web-02"
+```
+
+#### How it works
+
+On startup Fenris calls `/v1/decisions/stream?startup=true` to fetch the full current decision set. Subsequent polls use `startup=false` to receive only incremental adds and deletes since the last call, keeping database state in sync with the LAPI without re-fetching the entire list every minute.
+
+---
+
 ## API Reference
 
 All `/api/` routes require the header `X-API-Key: <key>` unless noted otherwise.
