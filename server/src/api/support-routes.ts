@@ -26,6 +26,19 @@ function fmtMinutes(m: number): string {
   return rem === 0 ? `${h}h` : `${h}h ${rem}m`;
 }
 
+/**
+ * Parse a date query parameter into a Date.
+ * Date-only strings like "2026-04-09" are treated as UTC midnight for `from`
+ * and UTC end-of-day (23:59:59.999Z) for `to`, so the full calendar day is
+ * included in BETWEEN queries.
+ */
+function parseDateParam(s: string, endOfDay: boolean): Date {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    return new Date(s + (endOfDay ? 'T23:59:59.999Z' : 'T00:00:00.000Z'));
+  }
+  return new Date(s);
+}
+
 // ── List tickets ──────────────────────────────────────────────────────────────
 
 export async function listTickets(request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> {
@@ -281,8 +294,9 @@ export async function resolveTicket(
 export async function getStats(request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> {
   try {
     const { from, to } = request.query as Record<string, string>;
-    const fromDate = from ? new Date(from) : new Date(Date.now() - 7 * 86_400_000);
-    const toDate   = to   ? new Date(to)   : new Date();
+    const fromDate = from ? parseDateParam(from, false) : new Date(Date.now() - 30 * 86_400_000);
+    const toDate   = to   ? parseDateParam(to,   true)  : new Date();
+    console.log(`[support] stats  from=${fromDate.toISOString()}  to=${toDate.toISOString()}  (raw: from=${from ?? 'default'} to=${to ?? 'default'})`);
 
     const [totals, byStatus, byCategory, byPriority, byUser, topRequesters, avgRes] = await Promise.all([
       query(`SELECT COUNT(*) AS total, COALESCE(SUM(duration_minutes),0) AS total_minutes
@@ -331,10 +345,9 @@ export async function getStats(request: FastifyRequest, reply: FastifyReply): Pr
 export async function getReport(request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> {
   try {
     const { from, to, format = 'json' } = request.query as Record<string, string>;
-    const fromDate = from ? new Date(from) : new Date(Date.now() - 7 * 86_400_000);
-    const toDate   = to   ? new Date(to)   : new Date();
-
-    const result = await query(`
+    const fromDate = from ? parseDateParam(from, false) : new Date(Date.now() - 30 * 86_400_000);
+    const toDate   = to   ? parseDateParam(to,   true)  : new Date();
+    const sql = `
       SELECT t.id, t.title, t.category, t.priority, t.status,
              t.requester_name, t.requester_email, t.requester_department,
              t.duration_minutes,
@@ -342,9 +355,12 @@ export async function getReport(request: FastifyRequest, reply: FastifyReply): P
              t.created_at, t.started_at, t.resolved_at, t.resolution
       FROM support_tickets t
       LEFT JOIN users u ON u.id = t.assigned_to_user_id
-      WHERE t.created_at BETWEEN $1 AND $2
+      WHERE t.created_at >= $1 AND t.created_at <= $2
       ORDER BY t.created_at DESC
-    `, [fromDate, toDate]);
+    `;
+    console.log(`[support] report from=${fromDate.toISOString()}  to=${toDate.toISOString()}  format=${format}  (raw: from=${from ?? 'default'} to=${to ?? 'default'})`);
+
+    const result = await query(sql, [fromDate, toDate]);
 
     if (format === 'csv') {
       const headers = ['id','title','category','priority','status','requester_name','requester_email',
