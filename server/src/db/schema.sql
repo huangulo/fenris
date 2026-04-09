@@ -127,6 +127,16 @@ CREATE TABLE IF NOT EXISTS monitor_checks (
 
 CREATE INDEX IF NOT EXISTS idx_monitor_checks_monitor_ts ON monitor_checks (monitor_id, checked_at DESC);
 
+-- Migration: add wazuh_agent_name column to servers
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'servers' AND column_name = 'wazuh_agent_name'
+  ) THEN
+    ALTER TABLE servers ADD COLUMN wazuh_agent_name VARCHAR(100);
+  END IF;
+END $$;
+
 -- ── Wazuh Agent State ─────────────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS wazuh_agents (
@@ -222,3 +232,22 @@ BEGIN
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+
+-- ── CrowdSec Decisions ────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS crowdsec_decisions (
+  id             SERIAL PRIMARY KEY,
+  server_id      INTEGER REFERENCES servers(id) ON DELETE CASCADE,
+  decision_id    INTEGER NOT NULL,
+  source_ip      VARCHAR(45) NOT NULL,
+  source_country VARCHAR(10),
+  scenario       VARCHAR(255),
+  action         VARCHAR(50),
+  duration       VARCHAR(50),
+  expires_at     TIMESTAMP,
+  created_at     TIMESTAMP DEFAULT NOW(),
+  UNIQUE (server_id, decision_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_crowdsec_decisions_server_id  ON crowdsec_decisions(server_id);
+CREATE INDEX IF NOT EXISTS idx_crowdsec_decisions_created_at ON crowdsec_decisions(created_at DESC);
