@@ -5,10 +5,11 @@ import { fmtRelativeTime } from '../utils';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function fmtMinutes(m: number): string {
-  if (!m) return '—';
-  const h = Math.floor(m / 60);
-  const rem = m % 60;
+function fmtMinutes(m: number | string | null | undefined): string {
+  const total = Math.floor(Number(m ?? 0));
+  if (!total) return '—';
+  const h = Math.floor(total / 60);
+  const rem = total % 60;
   if (h === 0) return `${rem}m`;
   return rem === 0 ? `${h}h` : `${h}h ${rem}m`;
 }
@@ -291,7 +292,7 @@ function DetailModal({ ticket: init, onClose, onRefresh }: DetailModalProps) {
     setShowResolveForm(false);
   };
 
-  const totalMinutes = (ticket.notes_duration_minutes ?? 0) + (ticket.duration_minutes ?? 0);
+  const totalMinutes = Number(ticket.notes_duration_minutes ?? 0) + Number(ticket.duration_minutes ?? 0);
 
   return (
     <div className="fixed inset-0 z-50 bg-black/70 flex items-start justify-center overflow-y-auto py-8 px-4"
@@ -425,7 +426,7 @@ function DetailModal({ ticket: init, onClose, onRefresh }: DetailModalProps) {
                           <div className="flex items-center gap-2 mb-1">
                             <span className="text-[10px] font-mono text-gray-400 font-medium">{n.username}</span>
                             <span className="text-[10px] font-mono text-gray-600">{fmtRelativeTime(n.created_at)}</span>
-                            {n.duration_minutes > 0 && (
+                            {Number(n.duration_minutes) > 0 && (
                               <span className="text-[10px] font-mono text-cyan-600">+{fmtMinutes(n.duration_minutes)}</span>
                             )}
                           </div>
@@ -588,7 +589,7 @@ export function SupportPage({ onOpenCountChange }: SupportPageProps) {
   }).length;
   const totalMinThisWeek = tickets
     .filter(t => new Date(t.created_at).getTime() > Date.now() - 7 * 86_400_000)
-    .reduce((s, t) => s + (t.notes_duration_minutes ?? 0) + (t.duration_minutes ?? 0), 0);
+    .reduce((s, t) => s + Number(t.notes_duration_minutes ?? 0) + Number(t.duration_minutes ?? 0), 0);
 
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
@@ -707,7 +708,7 @@ export function SupportPage({ onOpenCountChange }: SupportPageProps) {
                         </td>
                         <td className="px-4 py-2.5 text-gray-500 hidden lg:table-cell">{t.assigned_to_username ?? '—'}</td>
                         <td className="px-4 py-2.5 text-cyan-600 hidden md:table-cell">
-                          {fmtMinutes((t.notes_duration_minutes ?? 0) + (t.duration_minutes ?? 0))}
+                          {fmtMinutes(Number(t.notes_duration_minutes ?? 0) + Number(t.duration_minutes ?? 0))}
                         </td>
                         <td className="px-4 py-2.5 text-gray-500 whitespace-nowrap">{fmtRelativeTime(t.created_at)}</td>
                       </tr>
