@@ -86,6 +86,7 @@ interface SidebarProps {
   collapsed: boolean;
   onToggleCollapse: () => void;
   wazuhEnabled?: boolean;
+  crowdSecEnabled?: boolean;
 }
 
 // ── User bar ──────────────────────────────────────────────────────────────────
@@ -141,7 +142,16 @@ function UserBar({ collapsed }: { collapsed: boolean }) {
 
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 
-export function Sidebar({ view, onNavigate, activeAlerts, activeIncidents = 0, collapsed, onToggleCollapse, wazuhEnabled }: SidebarProps) {
+const IconShieldLock = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+    <rect x="9" y="11" width="6" height="5" rx="1"/>
+    <path d="M12 11v-2a1 1 0 00-2 0v2"/>
+    <circle cx="12" cy="13.5" r="0.6" fill="currentColor"/>
+  </svg>
+);
+
+export function Sidebar({ view, onNavigate, activeAlerts, activeIncidents = 0, collapsed, onToggleCollapse, wazuhEnabled, crowdSecEnabled }: SidebarProps) {
   const navItems: NavItem[] = [
     { id: 'incidents',   label: 'Incidents',   icon: <IconFire />, badge: activeIncidents },
     { id: 'overview',    label: 'Overview',    icon: <IconGrid /> },
@@ -149,7 +159,8 @@ export function Sidebar({ view, onNavigate, activeAlerts, activeIncidents = 0, c
     { id: 'containers',  label: 'Containers',  icon: <IconCube /> },
     { id: 'uptime',      label: 'Uptime',      icon: <IconHeartbeat /> },
     { id: 'alerts',      label: 'Alerts',      icon: <IconBell />, badge: activeAlerts },
-    ...(wazuhEnabled ? [{ id: 'wazuh' as View, label: 'Wazuh', icon: <IconShield /> }] : []),
+    ...(wazuhEnabled    ? [{ id: 'wazuh'     as View, label: 'Wazuh',    icon: <IconShield /> }]     : []),
+    ...(crowdSecEnabled ? [{ id: 'crowdsec'  as View, label: 'CrowdSec', icon: <IconShieldLock /> }] : []),
     { id: 'settings',    label: 'Settings',    icon: <IconSettings /> },
   ];
 

@@ -40,7 +40,23 @@
       "Bash(curl:*)",
       "Bash(git:*)",
       "Bash(npx tsup:*)",
-      "Bash(./node_modules/.bin/tsup)"
+      "Bash(./node_modules/.bin/tsup)",
+      "Bash(ls /root/workspace/fenris/*.env /root/workspace/fenris/.env*)",
+      "Bash(docker-compose build:*)",
+      "Bash(go version:*)",
+      "Bash(apt-get list:*)",
+      "Bash(apt-get install:*)",
+      "Bash(mkdir -p /root/workspace/fenris/agent-windows/dist)",
+      "Bash(go mod:*)",
+      "Bash(go get:*)",
+      "Bash(GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build:*)",
+      "Bash(python3:*)",
+      "Bash(snap install:*)",
+      "Bash(lsb_release -rs)",
+      "Bash(dpkg -i /tmp/packages-microsoft-prod.deb)",
+      "Bash(apt-get update:*)",
+      "Bash(pwsh -Version)",
+      "Bash(pwsh:*)"
     ]
   }
 }

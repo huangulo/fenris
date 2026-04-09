@@ -126,6 +126,21 @@ wazuh:
   poll_interval: "60s"
   verify_ssl: true
 
+# CrowdSec LAPI Integration
+# Polls each CrowdSec LAPI instance for active decisions (bans/captchas).
+# Each instance maps to a Fenris server by name — the name must match exactly.
+# Disabled by default — set enabled: true and configure your instances.
+crowdsec:
+  enabled: false
+  instances:
+    - name: "Racknerd Dallas"         # must match a Fenris server name
+      url: "http://100.90.129.230:8080"
+      api_key: "YOUR_LAPI_KEY"
+    - name: "Racknerd Pangolin"
+      url: "http://100.90.129.100:8080"
+      api_key: "YOUR_LAPI_KEY"
+  poll_interval: "60s"
+
 # Data Retention
 retention:
   metrics_days: 30
