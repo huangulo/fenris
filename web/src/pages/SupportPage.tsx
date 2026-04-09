@@ -537,7 +537,7 @@ export function SupportPage({ onOpenCountChange }: SupportPageProps) {
   const [modal,    setModal]    = useState<SupportTicket | null>(null);
   const [tab,      setTab]      = useState<'tickets' | 'reports'>('tickets');
   const [fromDate, setFromDate] = useState(() => {
-    const d = new Date(); d.setDate(d.getDate() - 7);
+    const d = new Date(); d.setDate(d.getDate() - 30);
     return d.toISOString().slice(0, 10);
   });
   const [toDate, setToDate] = useState(() => new Date().toISOString().slice(0, 10));
