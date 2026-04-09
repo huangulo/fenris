@@ -172,6 +172,38 @@ END $$;
 
 CREATE INDEX IF NOT EXISTS idx_alerts_incident_id ON alerts(incident_id);
 
+-- ── Users ─────────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS users (
+  id            SERIAL PRIMARY KEY,
+  username      VARCHAR(100) NOT NULL UNIQUE,
+  email         VARCHAR(255),
+  password_hash VARCHAR(255) NOT NULL,
+  role          VARCHAR(20) NOT NULL DEFAULT 'viewer'
+                  CHECK (role IN ('admin','operator','viewer')),
+  enabled       BOOLEAN DEFAULT TRUE,
+  last_login    TIMESTAMP,
+  created_at    TIMESTAMP DEFAULT NOW()
+);
+
+-- ── Audit Log ─────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS audit_log (
+  id            SERIAL PRIMARY KEY,
+  user_id       INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  username      VARCHAR(100) NOT NULL,
+  action        VARCHAR(100) NOT NULL,
+  resource_type VARCHAR(50),
+  resource_id   INTEGER,
+  metadata      JSONB,
+  ip_address    VARCHAR(45),
+  created_at    TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_log_user_id    ON audit_log(user_id);
+CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_log_resource   ON audit_log(resource_type, resource_id);
+
 -- Trigger for automatic timestamp updates
 CREATE OR REPLACE FUNCTION update_timestamp()
 RETURNS TRIGGER AS $$
