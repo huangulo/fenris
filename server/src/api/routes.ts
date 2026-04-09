@@ -1215,22 +1215,50 @@ const INCIDENT_LIST_SQL = `
   LEFT JOIN alert_summaries asm ON asm.id = i.ai_summary_id
 `;
 
+/** Set to true after first request so EXPLAIN ANALYZE runs only once at warmup. */
+let _incidentsExplained = false;
+
 export async function listIncidents(request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> {
   try {
     const { state, server_id, limit: limitParam } = request.query as Record<string, string>;
     const limit = Math.min(parseInt(limitParam ?? '100'), 500);
 
-    const conditions: string[] = [];
-    const params: unknown[]    = [];
+    const serverFilter = server_id ? parseInt(server_id) : null;
 
-    if (state)     { params.push(state);            conditions.push(`i.state = $${params.length}`); }
-    if (server_id) { params.push(parseInt(server_id)); conditions.push(`i.server_id = $${params.length}`); }
+    // Run EXPLAIN ANALYZE once on startup to surface slow query plans in logs.
+    if (!_incidentsExplained) {
+      _incidentsExplained = true;
+      try {
+        const explain = await query(`EXPLAIN ANALYZE ${INCIDENT_LIST_SQL} WHERE i.state != 'resolved' ORDER BY i.started_at DESC LIMIT 50`, []);
+        console.log('[incidents] EXPLAIN ANALYZE (active, limit 50):');
+        explain.rows.forEach((r: Record<string, unknown>) => console.log(' ', r['QUERY PLAN']));
+      } catch (e) { /* non-fatal */ }
+    }
 
-    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-    params.push(limit);
-    const sql = `${INCIDENT_LIST_SQL} ${where} ORDER BY i.started_at DESC LIMIT $${params.length}`;
-    const result = await query(sql, params);
-    return reply.send(result.rows);
+    let rows: unknown[];
+
+    if (state || serverFilter !== null) {
+      // Explicit filter: normal single-pass query
+      const conditions: string[] = [];
+      const params: unknown[]    = [];
+      if (state)            { params.push(state);       conditions.push(`i.state = $${params.length}`); }
+      if (serverFilter !== null) { params.push(serverFilter); conditions.push(`i.server_id = $${params.length}`); }
+      params.push(limit);
+      const sql = `${INCIDENT_LIST_SQL} WHERE ${conditions.join(' AND ')} ORDER BY i.started_at DESC LIMIT $${params.length}`;
+      const result = await query(sql, params);
+      rows = result.rows;
+    } else {
+      // No filter: return all active + last 20 resolved to keep payload small
+      const RESOLVED_LIMIT = 20;
+      const [activeRes, resolvedRes] = await Promise.all([
+        query(`${INCIDENT_LIST_SQL} WHERE i.state != 'resolved' ORDER BY i.started_at DESC`, []),
+        query(`${INCIDENT_LIST_SQL} WHERE i.state = 'resolved' ORDER BY i.started_at DESC LIMIT $1`, [RESOLVED_LIMIT]),
+      ]);
+      rows = [...activeRes.rows, ...resolvedRes.rows]
+        .sort((a: any, b: any) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime());
+    }
+
+    return reply.send(rows);
   } catch (err) {
     console.error('[incidents] list error:', err);
     return reply.status(500).send({ error: 'Failed to list incidents' });
