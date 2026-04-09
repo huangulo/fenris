@@ -13,13 +13,17 @@ import {
   getStatus, getServerStatus,
   listMonitors, createMonitor, updateMonitor, deleteMonitor, getMonitorChecks, testMonitorNow,
   setUptimeMonitor, setWazuhMonitor,
-  listWazuhAgents, getWazuhAgent, getWazuhStatus, testWazuhConnection,
+  listWazuhAgents, getWazuhAgent, getWazuhStatus, testWazuhConnection, getWazuhUnmatched,
+  getServerSecurity, updateServer,
+  listCrowdSecDecisions, getCrowdSecStats, testCrowdSecConnection, getCrowdSecStatus,
+  setCrowdSecMonitor,
   listIncidents, getIncident, claimIncident, resolveIncident, reopenIncident,
   updateIncident, mergeIncidents, splitIncident,
 } from './api/routes.js';
 import { backfillIncidents }   from './engine/incidents.js';
 import { UptimeMonitor }       from './monitors/uptime.js';
 import { WazuhMonitor }        from './monitors/wazuh.js';
+import { CrowdSecMonitor }     from './monitors/crowdsec.js';
 import { Predictor, parseDurationMs } from './engine/predictor.js';
 import { Summarizer }          from './engine/summarizer.js';
 import { Config }              from './types.js';
@@ -27,6 +31,7 @@ import {
   loadOrGenerateJwtSecret, ensureDefaultAdmin,
   verifyToken,
 } from './auth/index.js';
+import { query as dbQuery } from './db/client.js';
 import { login, logout, me, changePassword } from './api/auth-routes.js';
 import {
   listUsers, createUser, updateUser, resetPassword, deleteUser,
@@ -42,10 +47,11 @@ server.decorateRequest('user', null);
 
 let config: Config;
 let retentionInterval: NodeJS.Timeout | null = null;
-let predictor:    Predictor    | null = null;
-let summarizer:   Summarizer   | null = null;
-let uptimeMonitor: UptimeMonitor | null = null;
-let wazuhMonitor:  WazuhMonitor  | null = null;
+let predictor:       Predictor       | null = null;
+let summarizer:      Summarizer      | null = null;
+let uptimeMonitor:   UptimeMonitor   | null = null;
+let wazuhMonitor:    WazuhMonitor    | null = null;
+let crowdSecMonitor: CrowdSecMonitor | null = null;
 
 async function loadConfig(): Promise<Config> {
   const configPath = process.env.FENRIS_CONFIG || '/app/fenris.yaml';
@@ -121,6 +127,8 @@ async function startRetentionJob(): Promise<void> {
       console.log('Retention: deleted', a.rowCount, 'alert rows older than', alertsDays, 'days');
       const c = await query("DELETE FROM monitor_checks WHERE checked_at < NOW() - INTERVAL '90 days'");
       console.log('Retention: deleted', c.rowCount, 'monitor_checks older than 90 days');
+      const cs = await query("DELETE FROM crowdsec_decisions WHERE expires_at IS NOT NULL AND expires_at < NOW()");
+      console.log('Retention: deleted', cs.rowCount, 'expired crowdsec_decisions');
     } catch (err) { console.error('Retention job error:', err); }
   };
   retentionInterval = setInterval(runCleanup, 60 * 60 * 1000);
@@ -137,6 +145,29 @@ const PUBLIC_PATHS = new Set([
   'GET /api/v1/config',   // safe config subset (no secrets)
 ]);
 
+/**
+ * Dual-auth paths: accept either a valid JWT OR a valid X-API-Key matching any
+ * row in the servers table. These are read-only status endpoints consumed by
+ * Homepage's customapi widget which can only send static headers.
+ */
+function isDualAuthPath(method: string, path: string): boolean {
+  if (method !== 'GET') return false;
+  if (path === '/api/v1/status') return true;
+  // /api/v1/servers/:id/status  (id is numeric)
+  if (/^\/api\/v1\/servers\/\d+\/status$/.test(path)) return true;
+  return false;
+}
+
+/** Returns true if the given api_key exists in the servers table. */
+async function isValidServerApiKey(apiKey: string): Promise<boolean> {
+  try {
+    const { rows } = await dbQuery('SELECT id FROM servers WHERE api_key = $1 LIMIT 1', [apiKey]);
+    return rows.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 function buildAuthHook() {
   return async (request: any, reply: any) => {
     const path   = request.url.split('?')[0];
@@ -150,10 +181,27 @@ function buildAuthHook() {
     // Explicitly public API paths
     if (PUBLIC_PATHS.has(key)) return;
 
-    // All other API paths require a valid JWT
     const authHeader = request.headers['authorization'] as string | undefined;
     const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
 
+    // Dual-auth paths: JWT takes priority; fall back to X-API-Key
+    if (isDualAuthPath(method, path)) {
+      if (token) {
+        try {
+          request.user = verifyToken(token);
+          return; // valid JWT — proceed
+        } catch { /* fall through to API key check */ }
+      }
+      const apiKey = request.headers['x-api-key'] as string | undefined;
+      if (apiKey && await isValidServerApiKey(apiKey)) {
+        // Valid server API key — grant viewer-level access (no user object needed for read-only)
+        request.user = { id: 0, username: 'api-key', role: 'viewer' };
+        return;
+      }
+      return reply.status(401).send({ error: 'Authorization header required' });
+    }
+
+    // All other API paths require a valid JWT
     if (!token) {
       return reply.status(401).send({ error: 'Authorization header required' });
     }
@@ -269,11 +317,22 @@ async function start(): Promise<void> {
     server.post('/api/v1/incidents/:id/merge',   mergeIncidents);
     server.post('/api/v1/incidents/:id/split',   splitIncident);
 
+    // Server management
+    server.put('/api/v1/servers/:id',              updateServer);
+    server.get('/api/v1/servers/:id/security',     getServerSecurity);
+
     // Wazuh
-    server.get('/api/v1/wazuh/agents',          listWazuhAgents);
-    server.get('/api/v1/wazuh/agents/:id',      getWazuhAgent);
-    server.get('/api/v1/wazuh/status',          getWazuhStatus);
-    server.post('/api/v1/wazuh/test-connection', testWazuhConnection);
+    server.get('/api/v1/wazuh/agents',             listWazuhAgents);
+    server.get('/api/v1/wazuh/agents/:id',         getWazuhAgent);
+    server.get('/api/v1/wazuh/status',             getWazuhStatus);
+    server.get('/api/v1/wazuh/unmatched',          getWazuhUnmatched);
+    server.post('/api/v1/wazuh/test-connection',   testWazuhConnection);
+
+    // CrowdSec
+    server.get('/api/v1/crowdsec/decisions',       listCrowdSecDecisions);
+    server.get('/api/v1/crowdsec/stats',           getCrowdSecStats);
+    server.get('/api/v1/crowdsec/status',          getCrowdSecStatus);
+    server.post('/api/v1/crowdsec/test-connection', testCrowdSecConnection);
 
     // ── Graceful shutdown ─────────────────────────────────────────────────────
     for (const signal of ['SIGINT', 'SIGTERM']) {
@@ -284,6 +343,7 @@ async function start(): Promise<void> {
         summarizer?.stop();
         uptimeMonitor?.stop();
         wazuhMonitor?.stop();
+        crowdSecMonitor?.stop();
         await closeDatabase();
         await server.close();
         process.exit(0);
@@ -331,6 +391,16 @@ async function start(): Promise<void> {
       wazuhMonitor.start().catch(err => console.error('[wazuh] startup error:', err));
     } else {
       console.log('[wazuh] disabled — skipping');
+    }
+
+    const crowdSecCfg = config.crowdsec;
+    if (crowdSecCfg?.enabled && crowdSecCfg.instances?.length > 0) {
+      const { getDispatcher: getCrowdSecDisp } = await import('./api/routes.js');
+      crowdSecMonitor = new CrowdSecMonitor(crowdSecCfg, getCrowdSecDisp());
+      setCrowdSecMonitor(crowdSecMonitor);
+      crowdSecMonitor.start().catch(err => console.error('[crowdsec] startup error:', err));
+    } else {
+      console.log('[crowdsec] disabled or no instances configured — skipping');
     }
 
   } catch (error) {
