@@ -252,3 +252,46 @@ CREATE TABLE IF NOT EXISTS crowdsec_decisions (
 
 CREATE INDEX IF NOT EXISTS idx_crowdsec_decisions_server_id  ON crowdsec_decisions(server_id);
 CREATE INDEX IF NOT EXISTS idx_crowdsec_decisions_created_at ON crowdsec_decisions(created_at DESC);
+
+-- ── Support Tickets ───────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS support_tickets (
+  id                   SERIAL PRIMARY KEY,
+  title                VARCHAR(500) NOT NULL,
+  description          TEXT,
+  category             VARCHAR(50)  NOT NULL DEFAULT 'other'
+                         CHECK (category IN ('hardware','software','network','email','printer','account','training','other')),
+  priority             VARCHAR(20)  NOT NULL DEFAULT 'normal'
+                         CHECK (priority IN ('low','normal','high','urgent')),
+  status               VARCHAR(20)  NOT NULL DEFAULT 'open'
+                         CHECK (status IN ('open','in_progress','resolved','cancelled')),
+  requester_name       VARCHAR(255) NOT NULL,
+  requester_email      VARCHAR(255),
+  requester_department VARCHAR(100),
+  device_info          VARCHAR(500),
+  resolution           TEXT,
+  duration_minutes     INTEGER DEFAULT 0,
+  assigned_to_user_id  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_by_user_id   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at           TIMESTAMP DEFAULT NOW(),
+  updated_at           TIMESTAMP DEFAULT NOW(),
+  started_at           TIMESTAMP,
+  resolved_at          TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_support_tickets_status      ON support_tickets(status);
+CREATE INDEX IF NOT EXISTS idx_support_tickets_assigned_to ON support_tickets(assigned_to_user_id);
+CREATE INDEX IF NOT EXISTS idx_support_tickets_created_at  ON support_tickets(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_support_tickets_requester   ON support_tickets(requester_name);
+
+CREATE TABLE IF NOT EXISTS support_ticket_notes (
+  id               SERIAL PRIMARY KEY,
+  ticket_id        INTEGER REFERENCES support_tickets(id) ON DELETE CASCADE,
+  user_id          INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  username         VARCHAR(100) NOT NULL,
+  note             TEXT NOT NULL,
+  duration_minutes INTEGER DEFAULT 0,
+  created_at       TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_support_ticket_notes_ticket_id ON support_ticket_notes(ticket_id);
