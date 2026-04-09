@@ -14,6 +14,7 @@ import { UptimePage } from './pages/UptimePage';
 import { WazuhPage } from './pages/WazuhPage';
 import { CrowdSecPage } from './pages/CrowdSecPage';
 import { IncidentsPage } from './pages/IncidentsPage';
+import { SupportPage } from './pages/SupportPage';
 
 const REFRESH_MS = 30_000;
 
@@ -218,6 +219,7 @@ function Dashboard() {
   // Incident counts come from the IncidentsPage itself via its own fetch;
   // pass activeAlerts as fallback badge for the sidebar until we have a global count.
   const [activeIncidentCount, setActiveIncidentCount] = useState(0);
+  const [openTicketCount,     setOpenTicketCount]     = useState(0);
 
   // ── Loading screen ───────────────────────────────────────────────────────────
   if (loading) {
@@ -292,6 +294,8 @@ function Dashboard() {
         return <WazuhPage />;
       case 'crowdsec':
         return <CrowdSecPage />;
+      case 'support':
+        return <SupportPage onOpenCountChange={setOpenTicketCount} />;
       case 'settings':
         return <SettingsPage config={serverConfig} />;
       default:
@@ -310,6 +314,7 @@ function Dashboard() {
         onToggleCollapse={() => setSidebarCollapsed(c => !c)}
         wazuhEnabled={wazuhEnabled}
         crowdSecEnabled={crowdSecEnabled}
+        openTickets={openTicketCount}
       />
 
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
