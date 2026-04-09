@@ -12,6 +12,16 @@ CREATE TABLE IF NOT EXISTS servers (
   UNIQUE (api_key, name)
 );
 
+-- Migration: add os_type column to servers
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'servers' AND column_name = 'os_type'
+  ) THEN
+    ALTER TABLE servers ADD COLUMN os_type VARCHAR(32);
+  END IF;
+END $$;
+
 -- Migration: replace individual unique constraints with composite (api_key, name)
 DO $$ BEGIN
   ALTER TABLE servers DROP CONSTRAINT IF EXISTS servers_api_key_key;

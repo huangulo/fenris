@@ -14,6 +14,28 @@ interface OverviewPageProps {
   incidentsInvestigating?: number;
 }
 
+// ── OS icon ───────────────────────────────────────────────────────────────────
+
+function OsIcon({ osType }: { osType?: string | null }) {
+  if (osType === 'windows') {
+    return (
+      <svg width="11" height="11" viewBox="0 0 88 88" fill="currentColor"
+        className="text-blue-400/70 flex-shrink-0" aria-label="Windows">
+        <path d="M0 12.402l35.687-4.86.016 34.423-35.67.203zm35.67 33.529.028 34.453L.028 75.48.026 45.7zm4.326-39.025L87.314 0v41.527l-47.318.376zm47.329 39.349-.011 41.34-47.318-6.678-.066-34.739z"/>
+      </svg>
+    );
+  }
+  if (osType === 'linux') {
+    return (
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"
+        className="text-yellow-400/70 flex-shrink-0" aria-label="Linux">
+        <path d="M12 2C8.13 2 5 5.13 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26C17.81 13.47 19 11.38 19 9c0-3.87-3.13-7-7-7zM9 21c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-1H9v1z"/>
+      </svg>
+    );
+  }
+  return null;
+}
+
 // ── Build per-server sparkline arrays from the bulk metrics fetch ──────────────
 
 function buildSparklines(metrics: MetricRow[]): Map<number, ServerSparklines> {
@@ -125,6 +147,7 @@ function ServerCard({ server, sparklines, containers, alertCount, onClick }: Ser
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2 min-w-0">
           <OnlineDot online={online} />
+          <OsIcon osType={server.os_type} />
           <span className="font-semibold text-[13px] text-white truncate leading-none">
             {server.name}
           </span>

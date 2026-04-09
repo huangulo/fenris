@@ -217,6 +217,7 @@ export async function ingestMetrics(metrics: Metric[]): Promise<{ anomaliesDetec
 interface AgentPayload {
   server_name: string;
   host_ip?: string;
+  os_type?: string;
   metrics: Omit<Metric, 'id' | 'server_id'>[];
 }
 
@@ -230,7 +231,7 @@ export async function receiveMetrics(
       return reply.status(401).send({ error: 'unauthorized' });
     }
 
-    const { server_name, host_ip: payloadHostIP, metrics: rawMetrics } = request.body;
+    const { server_name, host_ip: payloadHostIP, os_type, metrics: rawMetrics } = request.body;
     if (!server_name) {
       return reply.status(400).send({ error: 'server_name is required in payload' });
     }
@@ -251,12 +252,13 @@ export async function receiveMetrics(
 
     // Upsert: auto-register on first contact, update heartbeat on reconnect
     const upsertResult = await query(
-      `INSERT INTO servers (name, ip_address, api_key, last_heartbeat)
-       VALUES ($1, $2, $3, NOW())
+      `INSERT INTO servers (name, ip_address, api_key, last_heartbeat, os_type)
+       VALUES ($1, $2, $3, NOW(), $4)
        ON CONFLICT (api_key, name)
-       DO UPDATE SET ip_address = EXCLUDED.ip_address, last_heartbeat = NOW()
+       DO UPDATE SET ip_address = EXCLUDED.ip_address, last_heartbeat = NOW(),
+         os_type = COALESCE(EXCLUDED.os_type, servers.os_type)
        RETURNING id, (xmax = 0) AS is_new`,
-      [server_name, ip, apiKey]
+      [server_name, ip, apiKey, os_type ?? null]
     );
 
     const { id: serverId, is_new: isNew } = upsertResult.rows[0];
