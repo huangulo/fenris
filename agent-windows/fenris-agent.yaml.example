@@ -1,0 +1,30 @@
+# Fenris Windows Agent configuration
+# Copy this file to fenris-agent.yaml and fill in your values.
+# The agent searches for config in:
+#   1. Path passed via --config flag
+#   2. Same directory as the executable
+#   3. C:\ProgramData\Fenris\fenris-agent.yaml
+#   4. ./fenris-agent.yaml (current directory)
+#
+# All settings can also be set via environment variables (see below).
+
+# URL of the Fenris server  [env: FENRIS_SERVER_URL]
+server_url: "https://fenris.example.com"
+
+# API key shown in Fenris → Settings → Agent Keys  [env: FENRIS_API_KEY]
+api_key: "your-api-key-here"
+
+# Display name for this host in the Fenris dashboard  [env: FENRIS_SERVER_NAME]
+# Defaults to the machine hostname.
+server_name: ""
+
+# How often to collect and send metrics, in seconds  [env: FENRIS_COLLECT_INTERVAL]
+collect_interval_seconds: 30
+
+# Override the detected host IP  [env: FENRIS_HOST_IP]
+# Leave blank to auto-detect the primary non-virtual IPv4 address.
+host_ip: ""
+
+# Verify the server's TLS certificate  [env: FENRIS_VERIFY_SSL]
+# Set to false only for self-signed certs in dev environments.
+verify_ssl: true
