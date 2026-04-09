@@ -1040,8 +1040,9 @@ export async function claimIncident(
   reply: FastifyReply
 ): Promise<FastifyReply> {
   try {
-    const id         = parseInt(request.params.id);
-    const claimedBy  = request.body?.claimed_by ?? 'you';
+    const id = parseInt(request.params.id);
+    // Prefer JWT username, fall back to body claim, fall back to 'you'
+    const claimedBy = (request as any).user?.username ?? request.body?.claimed_by ?? 'you';
     const result = await query(
       `UPDATE incidents
        SET state = 'investigating', claimed_by = $1, claimed_at = NOW(), updated_at = NOW()
