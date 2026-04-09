@@ -32,12 +32,13 @@ interface CrowdSecDecision {
 }
 
 interface InstanceState {
-  cfg:         CrowdSecInstanceConfig;
-  serverId:    number | null;
-  lastPollAt:  Date   | null;
-  lastPollOk:  boolean;
+  cfg:          CrowdSecInstanceConfig;
+  serverId:     number | null;
+  lastPollAt:   Date   | null;
+  lastPollOk:   boolean;
   lastPollError: string | null;
-  backoffMs:   number;
+  backoffMs:    number;
+  isFirstPoll:  boolean;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -85,7 +86,7 @@ export class CrowdSecMonitor {
       } else {
         console.log(`[crowdsec] Instance "${inst.name}" → server_id=${serverId}`);
       }
-      this.instances.push({ cfg: inst, serverId, lastPollAt: null, lastPollOk: false, lastPollError: null, backoffMs: 60_000 });
+      this.instances.push({ cfg: inst, serverId, lastPollAt: null, lastPollOk: false, lastPollError: null, backoffMs: 60_000, isFirstPoll: true });
     }
 
     await this.pollAll();
@@ -107,8 +108,8 @@ export class CrowdSecMonitor {
     if (!inst) return { ok: false, error: `Instance "${instanceName}" not found in config` };
 
     try {
-      const decisions = await this.fetchDecisions(inst);
-      return { ok: true, decision_count: decisions.length };
+      const { added } = await this.fetchDecisionStream(inst, true);
+      return { ok: true, decision_count: added.length };
     } catch (err: any) {
       return { ok: false, error: err?.message ?? 'Unknown error' };
     }
@@ -161,13 +162,15 @@ export class CrowdSecMonitor {
       console.log(`[crowdsec] Resolved "${state.cfg.name}" → server_id=${state.serverId}`);
     }
 
-    const decisions = await this.fetchDecisions(state.cfg);
-    state.lastPollAt = new Date();
+    const startup = state.isFirstPoll;
+    const { added, deleted } = await this.fetchDecisionStream(state.cfg, startup);
+    state.lastPollAt   = new Date();
+    state.isFirstPoll  = false;
 
+    // ── Upsert added decisions ────────────────────────────────────────────────
     const newBans: CrowdSecDecision[] = [];
 
-    for (const d of decisions) {
-      // Compute expires_at from duration or "until" field
+    for (const d of added) {
       let expiresAt: Date | null = null;
       if (d.until) {
         expiresAt = new Date(d.until);
@@ -175,7 +178,7 @@ export class CrowdSecMonitor {
         expiresAt = new Date(Date.now() + parseGoDuration(d.duration));
       }
 
-      const { rowCount } = await query(
+      await query(
         `INSERT INTO crowdsec_decisions
            (server_id, decision_id, source_ip, source_country, scenario, action, duration, expires_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -192,22 +195,19 @@ export class CrowdSecMonitor {
         ]
       );
 
-      // rowCount === 1 for INSERT (new decision), 0/1 for UPDATE (existing)
-      // We track new bans by checking if INSERT actually added a row:
-      // ON CONFLICT returns rowCount=1 for both insert and update, so we use a different approach —
-      // check if expires_at > now (still active) and type === 'ban'
-      if ((rowCount ?? 0) > 0 && d.type === 'ban') {
-        newBans.push(d);
-      }
+      if (d.type === 'ban') newBans.push(d);
     }
 
-    // Delete expired decisions (expires_at < NOW)
-    await query(
-      'DELETE FROM crowdsec_decisions WHERE server_id = $1 AND expires_at IS NOT NULL AND expires_at < NOW()',
-      [state.serverId]
-    );
+    // ── Remove deleted decisions reported by LAPI ─────────────────────────────
+    if (deleted.length > 0) {
+      const deletedIds = deleted.map(d => d.id);
+      await query(
+        `DELETE FROM crowdsec_decisions WHERE server_id = $1 AND decision_id = ANY($2::int[])`,
+        [state.serverId, deletedIds]
+      );
+    }
 
-    // Alert on ban decisions (with per-server cooldown)
+    // ── Alert on new ban decisions (per-server cooldown) ──────────────────────
     if (newBans.length > 0) {
       const lastAlert = this.alertCooldown.get(state.serverId) ?? 0;
       if (Date.now() - lastAlert >= ALERT_COOLDOWN_MS) {
@@ -219,15 +219,19 @@ export class CrowdSecMonitor {
     }
   }
 
-  private async fetchDecisions(inst: CrowdSecInstanceConfig): Promise<CrowdSecDecision[]> {
-    const res = await fetch(`${inst.url}/v1/decisions`, {
-      headers: { 'X-Api-Key': inst.api_key },
-    });
+  private async fetchDecisionStream(
+    inst: CrowdSecInstanceConfig,
+    startup: boolean,
+  ): Promise<{ added: CrowdSecDecision[]; deleted: CrowdSecDecision[] }> {
+    const url = `${inst.url}/v1/decisions/stream?startup=${startup}`;
+    const res = await fetch(url, { headers: { 'X-Api-Key': inst.api_key } });
     if (!res.ok) throw new Error(`CrowdSec LAPI responded HTTP ${res.status}`);
-    const body = await res.json();
-    // LAPI returns null when there are no decisions
-    if (body === null) return [];
-    return body as CrowdSecDecision[];
+    const body = await res.json() as { new?: CrowdSecDecision[] | null; deleted?: CrowdSecDecision[] | null } | null;
+    if (body === null) return { added: [], deleted: [] };
+    return {
+      added:   body.new     ?? [],
+      deleted: body.deleted ?? [],
+    };
   }
 
   private async fire(severity: Alert['severity'], serverId: number, message: string): Promise<void> {
