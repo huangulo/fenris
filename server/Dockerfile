@@ -15,11 +15,11 @@ RUN pnpm run build
 # Copy SQL asset alongside the bundle so readFileSync can find it
 RUN cp src/db/schema.sql dist/schema.sql
 
-# Create logs directory
-RUN mkdir -p /app/logs
+# Create logs and data directories, owned by non-root user
+RUN adduser --disabled-password --no-create-home fenris \
+ && mkdir -p /app/logs /app/data \
+ && chown -R fenris:fenris /app/logs /app/data
 
-# Non-root user
-RUN adduser --disabled-password --no-create-home fenris
 USER fenris
 
 # Expose port
