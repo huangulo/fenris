@@ -21,7 +21,7 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-# ── Config ─────────────────────────────────────────────────────────────────────
+# -- Config -------------------------------------------------------------------
 
 $ServiceName   = "FenrisAgent"
 $InstallDir    = "C:\Program Files\Fenris"
@@ -32,7 +32,7 @@ $BinaryPath    = "$InstallDir\$BinaryName"
 $GithubRepo    = "huangulo/fenris"
 $ReleaseAsset  = "fenris-agent-windows-amd64.exe"
 
-# ── Helpers ────────────────────────────────────────────────────────────────────
+# -- Helpers ------------------------------------------------------------------
 
 function Prompt-Value {
     param([string]$Name, [string]$EnvVar, [string]$Default = "", [bool]$Secret = $false)
@@ -44,20 +44,20 @@ function Prompt-Value {
         return [Runtime.InteropServices.Marshal]::PtrToStringAuto(
             [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure))
     }
-    $input = Read-Host "$prompt"
-    if ($input -eq "" -and $Default -ne "") { return $Default }
-    return $input
+    $entered = Read-Host "$prompt"
+    if ($entered -eq "" -and $Default -ne "") { return $Default }
+    return $entered
 }
 
-function Write-Step { param([string]$Msg) Write-Host "`n==> $Msg" -ForegroundColor Cyan }
+function Write-Step { param([string]$Msg) Write-Host "" ; Write-Host "==> $Msg" -ForegroundColor Cyan }
 function Write-Ok   { param([string]$Msg) Write-Host "    OK: $Msg" -ForegroundColor Green }
 function Write-Warn { param([string]$Msg) Write-Host "    WARN: $Msg" -ForegroundColor Yellow }
 
-# ── Gather config ──────────────────────────────────────────────────────────────
+# -- Gather config ------------------------------------------------------------
 
 Write-Host ""
 Write-Host "  Fenris Agent Installer" -ForegroundColor White
-Write-Host "  ─────────────────────" -ForegroundColor DarkGray
+Write-Host "  ---------------------" -ForegroundColor DarkGray
 Write-Host ""
 
 $ServerURL   = Prompt-Value "Fenris server URL"  "FENRIS_SERVER_URL"  "http://localhost:3200"
@@ -71,7 +71,7 @@ if (-not $ApiKey) {
     exit 1
 }
 
-# ── Download binary ────────────────────────────────────────────────────────────
+# -- Download binary ----------------------------------------------------------
 
 Write-Step "Fetching latest release from GitHub"
 
@@ -81,7 +81,7 @@ try {
     $asset = $release.assets | Where-Object { $_.name -eq $ReleaseAsset } | Select-Object -First 1
     if (-not $asset) { throw "Asset '$ReleaseAsset' not found in release $($release.tag_name)" }
     $downloadUrl = $asset.browser_download_url
-    Write-Ok "Found $($release.tag_name) — $ReleaseAsset"
+    Write-Ok "Found $($release.tag_name) - $ReleaseAsset"
 } catch {
     Write-Warn "Could not fetch release: $_"
     Write-Warn "Please download $ReleaseAsset manually and re-run with FENRIS_BINARY_PATH set."
@@ -93,7 +93,7 @@ New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 Invoke-WebRequest -Uri $downloadUrl -OutFile $BinaryPath -UseBasicParsing
 Write-Ok "Saved to $BinaryPath"
 
-# ── Write config ───────────────────────────────────────────────────────────────
+# -- Write config -------------------------------------------------------------
 
 Write-Step "Writing configuration"
 New-Item -ItemType Directory -Force -Path $ConfigDir | Out-Null
@@ -108,12 +108,12 @@ verify_ssl: $($VerifySSL.ToLower())
 
 Write-Ok "Config written to $ConfigFile"
 
-# ── Stop + remove existing service ────────────────────────────────────────────
+# -- Stop + remove existing service -------------------------------------------
 
 Write-Step "Preparing service"
 $svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
 if ($svc) {
-    Write-Warn "Existing service found — stopping and removing"
+    Write-Warn "Existing service found - stopping and removing"
     if ($svc.Status -eq "Running") {
         Stop-Service -Name $ServiceName -Force
         Start-Sleep -Seconds 2
@@ -121,7 +121,7 @@ if ($svc) {
     & $BinaryPath uninstall 2>&1 | Out-Null
 }
 
-# ── Install and start service ─────────────────────────────────────────────────
+# -- Install and start service ------------------------------------------------
 
 Write-Step "Installing service"
 & $BinaryPath install --config $ConfigFile
@@ -137,11 +137,11 @@ if ($svc.Status -eq "Running") {
     Write-Ok "Service is RUNNING"
 } else {
     Write-Warn "Service state: $($svc.Status)"
-    Write-Warn "Check Event Viewer → Windows Logs → Application for errors."
+    Write-Warn "Check Event Viewer -> Windows Logs -> Application for errors."
     exit 1
 }
 
-# ── Summary ───────────────────────────────────────────────────────────────────
+# -- Summary ------------------------------------------------------------------
 
 Write-Host ""
 Write-Host "  Installation complete!" -ForegroundColor Green
