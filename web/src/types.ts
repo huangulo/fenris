@@ -1,4 +1,4 @@
-export type View = 'incidents' | 'overview' | 'server' | 'alerts' | 'containers' | 'uptime' | 'wazuh' | 'crowdsec' | 'settings';
+export type View = 'incidents' | 'overview' | 'server' | 'alerts' | 'containers' | 'uptime' | 'wazuh' | 'crowdsec' | 'support' | 'settings';
 
 export interface MetricRow {
   id: number;
@@ -213,4 +213,58 @@ export interface CrowdSecInstanceStatus {
 export interface CrowdSecStatus {
   enabled:   boolean;
   instances: CrowdSecInstanceStatus[];
+}
+
+// ── Support Tickets ───────────────────────────────────────────────────────────
+
+export type TicketCategory = 'hardware' | 'software' | 'network' | 'email' | 'printer' | 'account' | 'training' | 'other';
+export type TicketPriority = 'low' | 'normal' | 'high' | 'urgent';
+export type TicketStatus   = 'open' | 'in_progress' | 'resolved' | 'cancelled';
+
+export interface SupportTicketNote {
+  id:               number;
+  ticket_id:        number;
+  user_id:          number | null;
+  username:         string;
+  note:             string;
+  duration_minutes: number;
+  created_at:       string;
+}
+
+export interface SupportTicket {
+  id:                    number;
+  title:                 string;
+  description:           string | null;
+  category:              TicketCategory;
+  priority:              TicketPriority;
+  status:                TicketStatus;
+  requester_name:        string;
+  requester_email:       string | null;
+  requester_department:  string | null;
+  device_info:           string | null;
+  resolution:            string | null;
+  duration_minutes:      number;
+  assigned_to_user_id:   number | null;
+  assigned_to_username:  string | null;
+  created_by_user_id:    number | null;
+  created_by_username:   string | null;
+  created_at:            string;
+  updated_at:            string;
+  started_at:            string | null;
+  resolved_at:           string | null;
+  notes?:                SupportTicketNote[];
+  notes_duration_minutes?: number;
+  note_count?:           number;
+}
+
+export interface SupportStats {
+  total_tickets:       number;
+  total_hours:         string;
+  total_minutes:       number;
+  avg_resolution_time: string | null;
+  by_status:           Array<{ status: string; count: number }>;
+  by_category:         Array<{ category: string; count: number }>;
+  by_priority:         Array<{ priority: string; count: number }>;
+  tickets_per_user:    Array<{ username: string; ticket_count: number; total_minutes: number }>;
+  top_requesters:      Array<{ requester_name: string; count: number }>;
 }

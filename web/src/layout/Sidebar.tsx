@@ -87,6 +87,7 @@ interface SidebarProps {
   onToggleCollapse: () => void;
   wazuhEnabled?: boolean;
   crowdSecEnabled?: boolean;
+  openTickets?: number;
 }
 
 // ── User bar ──────────────────────────────────────────────────────────────────
@@ -142,6 +143,13 @@ function UserBar({ collapsed }: { collapsed: boolean }) {
 
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 
+const IconHeadphones = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M3 18v-6a9 9 0 0118 0v6"/>
+    <path d="M21 19a2 2 0 01-2 2h-1a2 2 0 01-2-2v-3a2 2 0 012-2h3zM3 19a2 2 0 002 2h1a2 2 0 002-2v-3a2 2 0 00-2-2H3z"/>
+  </svg>
+);
+
 const IconShieldLock = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
     <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
@@ -151,13 +159,14 @@ const IconShieldLock = () => (
   </svg>
 );
 
-export function Sidebar({ view, onNavigate, activeAlerts, activeIncidents = 0, collapsed, onToggleCollapse, wazuhEnabled, crowdSecEnabled }: SidebarProps) {
+export function Sidebar({ view, onNavigate, activeAlerts, activeIncidents = 0, collapsed, onToggleCollapse, wazuhEnabled, crowdSecEnabled, openTickets = 0 }: SidebarProps) {
   const navItems: NavItem[] = [
     { id: 'overview',    label: 'Overview',    icon: <IconGrid /> },
     { id: 'incidents',   label: 'Incidents',   icon: <IconFire />, badge: activeIncidents },
     { id: 'server',      label: 'Servers',     icon: <IconServer /> },
     { id: 'containers',  label: 'Containers',  icon: <IconCube /> },
     { id: 'uptime',      label: 'Uptime',      icon: <IconHeartbeat /> },
+    { id: 'support',     label: 'Support',     icon: <IconHeadphones />, badge: openTickets || undefined },
     { id: 'alerts',      label: 'Alerts',      icon: <IconBell />, badge: activeAlerts },
     ...(wazuhEnabled    ? [{ id: 'wazuh'     as View, label: 'Wazuh',    icon: <IconShield /> }]     : []),
     ...(crowdSecEnabled ? [{ id: 'crowdsec'  as View, label: 'CrowdSec', icon: <IconShieldLock /> }] : []),
