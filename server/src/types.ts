@@ -151,4 +151,13 @@ export interface Config {
     poll_interval: string;  // "60s"
     verify_ssl: boolean;
   };
+  crowdsec?: {
+    enabled: boolean;
+    instances: Array<{
+      name: string;   // must match a Fenris server name exactly
+      url: string;
+      api_key: string;
+    }>;
+    poll_interval: string;  // "60s"
+  };
 }
