@@ -1,5 +1,5 @@
-import React, { useMemo } from 'react';
-import { ServerRow, MetricRow, AlertRow, DockerSnapshot, SummaryRow } from '../types';
+import React, { useMemo, useState, useEffect } from 'react';
+import { ServerRow, MetricRow, AlertRow, DockerSnapshot, SummaryRow, WazuhSecurityInfo, CrowdSecDecisionRow, CrowdSecStats } from '../types';
 import {
   isOnline, fmtRelativeTime, metricColor, metricTextClass,
   fmtBytesPerSec, fmtUptime, truncateImage,
@@ -7,16 +7,20 @@ import {
 import { CircularGauge } from '../components/CircularGauge';
 import { HistoryChart } from '../components/HistoryChart';
 import { StateBadge, OnlineDot } from '../components/Badges';
+import { apiFetch } from '../api';
+import { useAuth, hasRole } from '../auth';
 
 interface ServerDetailPageProps {
-  server:         ServerRow | null;
-  servers:        ServerRow[];
-  metrics:        MetricRow[];
-  docker:         DockerSnapshot;
-  alerts:         AlertRow[];
-  summaries:      SummaryRow[];
-  onBack:         () => void;
-  onSelectServer: (id: number) => void;
+  server:             ServerRow | null;
+  servers:            ServerRow[];
+  metrics:            MetricRow[];
+  docker:             DockerSnapshot;
+  alerts:             AlertRow[];
+  summaries:          SummaryRow[];
+  onBack:             () => void;
+  onSelectServer:     (id: number) => void;
+  onNavigate?:        (view: string) => void;
+  crowdSecEnabled?:   boolean;
 }
 
 // ── Metric panel ──────────────────────────────────────────────────────────────
@@ -220,6 +224,251 @@ function InsightsPanel({ summaries }: { summaries: SummaryRow[] }) {
   );
 }
 
+// ── Security panel (Wazuh) ────────────────────────────────────────────────────
+
+function wazuhStatusColor(status: string) {
+  if (status === 'active')          return 'text-emerald-400 border-emerald-800/40 bg-emerald-900/10';
+  if (status === 'disconnected')    return 'text-red-400 border-red-800/40 bg-red-900/10';
+  if (status === 'never_connected') return 'text-gray-500 border-gray-700/40 bg-gray-800/10';
+  return 'text-yellow-400 border-yellow-800/40 bg-yellow-900/10';
+}
+
+interface SecurityPanelProps {
+  serverId:    number;
+  onNavigate?: (view: string) => void;
+}
+
+function SecurityPanel({ serverId, onNavigate }: SecurityPanelProps) {
+  const { user } = useAuth();
+  const isAdmin = hasRole(user, 'admin');
+  const [info, setInfo]           = useState<WazuhSecurityInfo | null>(null);
+  const [aliasMode, setAliasMode] = useState(false);
+  const [selected, setSelected]   = useState('');
+  const [saving, setSaving]       = useState(false);
+
+  const load = () => {
+    apiFetch(`/api/v1/servers/${serverId}/security`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d) setInfo(d); })
+      .catch(() => {});
+  };
+
+  useEffect(() => { load(); }, [serverId]);
+
+  const saveAlias = async () => {
+    if (!selected) return;
+    setSaving(true);
+    const res = await apiFetch(`/api/v1/servers/${serverId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ wazuh_agent_name: selected }),
+    });
+    setSaving(false);
+    if (res.ok) { setAliasMode(false); load(); }
+  };
+
+  if (!info) return null;
+
+  const { wazuh_agent: agent, active_alerts, available_agents } = info;
+
+  if (!agent) {
+    return (
+      <div className="card p-4 space-y-2">
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-gray-500 font-mono">No Wazuh agent linked</span>
+          {isAdmin && !aliasMode && available_agents.length > 0 && (
+            <button onClick={() => setAliasMode(true)}
+              className="text-[10px] font-mono text-cyan-600 hover:text-cyan-400 border border-cyan-800/40 rounded px-1.5 py-0.5 transition-colors">
+              Set alias
+            </button>
+          )}
+        </div>
+        {aliasMode && (
+          <div className="flex gap-2 items-center">
+            <select value={selected} onChange={e => setSelected(e.target.value)}
+              className="flex-1 bg-gray-900/60 border border-gray-800/60 rounded px-2 py-1 text-xs text-gray-300 outline-none focus:border-gray-600 font-mono">
+              <option value="">— select agent —</option>
+              {available_agents.map(a => <option key={a} value={a}>{a}</option>)}
+            </select>
+            <button onClick={saveAlias} disabled={saving || !selected}
+              className="text-[10px] font-mono text-cyan-400 border border-cyan-700/40 rounded px-2 py-1 hover:bg-cyan-900/10 disabled:opacity-40 transition-colors">
+              Save
+            </button>
+            <button onClick={() => setAliasMode(false)}
+              className="text-[10px] text-gray-600 hover:text-gray-400">Cancel</button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="card p-4 space-y-3">
+      <div className="flex items-center gap-2">
+        <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${wazuhStatusColor(agent.status)}`}>
+          {agent.status}
+        </span>
+        <span className="text-xs text-gray-300 font-mono font-semibold">{agent.name}</span>
+        {active_alerts > 0 && (
+          <span className="text-[10px] font-mono text-red-400 border border-red-800/40 bg-red-900/10 rounded px-1.5 py-0.5">
+            {active_alerts} alert{active_alerts !== 1 ? 's' : ''}
+          </span>
+        )}
+      </div>
+
+      <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs font-mono">
+        {agent.os && (
+          <><span className="text-gray-500">OS</span><span className="text-gray-300">{agent.os}</span></>
+        )}
+        {agent.version && (
+          <><span className="text-gray-500">Version</span><span className="text-gray-300">{agent.version}</span></>
+        )}
+        {agent.last_keepalive && (
+          <><span className="text-gray-500">Last keepalive</span><span className="text-gray-300">{fmtRelativeTime(agent.last_keepalive)}</span></>
+        )}
+        {agent.group && (
+          <><span className="text-gray-500">Group</span><span className="text-gray-300">{agent.group}</span></>
+        )}
+      </div>
+
+      <div className="flex gap-2">
+        {onNavigate && (
+          <button onClick={() => onNavigate('wazuh')}
+            className="text-[10px] font-mono text-violet-400 hover:text-violet-300 border border-violet-800/40 rounded px-2 py-0.5 transition-colors">
+            View in Wazuh tab →
+          </button>
+        )}
+        {isAdmin && (
+          <button onClick={() => { setAliasMode(v => !v); setSelected(''); }}
+            className="text-[10px] font-mono text-gray-500 hover:text-gray-300 border border-gray-700/40 rounded px-2 py-0.5 transition-colors">
+            Change alias
+          </button>
+        )}
+      </div>
+      {aliasMode && (
+        <div className="flex gap-2 items-center">
+          <select value={selected} onChange={e => setSelected(e.target.value)}
+            className="flex-1 bg-gray-900/60 border border-gray-800/60 rounded px-2 py-1 text-xs text-gray-300 outline-none focus:border-gray-600 font-mono">
+            <option value="">— select agent —</option>
+            {available_agents.map(a => <option key={a} value={a}>{a}</option>)}
+          </select>
+          <button onClick={saveAlias} disabled={saving || !selected}
+            className="text-[10px] font-mono text-cyan-400 border border-cyan-700/40 rounded px-2 py-1 hover:bg-cyan-900/10 disabled:opacity-40 transition-colors">
+            Save
+          </button>
+          <button onClick={() => setAliasMode(false)}
+            className="text-[10px] text-gray-600 hover:text-gray-400">Cancel</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── CrowdSec panel ────────────────────────────────────────────────────────────
+
+function countryFlag(cc: string | null): string {
+  if (!cc || cc.length !== 2) return '';
+  const offset = 127397;
+  return String.fromCodePoint(...cc.toUpperCase().split('').map(c => c.charCodeAt(0) + offset));
+}
+
+function actionBadge(action: string | null) {
+  if (!action) return <span className="text-gray-600">—</span>;
+  const color = action === 'ban'
+    ? 'text-red-400 border-red-800/40 bg-red-900/10'
+    : 'text-yellow-400 border-yellow-800/40 bg-yellow-900/10';
+  return <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${color}`}>{action}</span>;
+}
+
+interface CrowdSecPanelProps {
+  serverId:   number;
+  onNavigate?: (view: string) => void;
+}
+
+function CrowdSecPanel({ serverId, onNavigate }: CrowdSecPanelProps) {
+  const [decisions, setDecisions] = useState<CrowdSecDecisionRow[]>([]);
+  const [stats,     setStats]     = useState<CrowdSecStats | null>(null);
+
+  useEffect(() => {
+    Promise.all([
+      apiFetch(`/api/v1/crowdsec/decisions?server_id=${serverId}&limit=10`).then(r => r.ok ? r.json() : []),
+      apiFetch(`/api/v1/crowdsec/stats?server_id=${serverId}`).then(r => r.ok ? r.json() : null),
+    ]).then(([d, s]) => { setDecisions(d); setStats(s); }).catch(() => {});
+  }, [serverId]);
+
+  return (
+    <div className="card p-4 space-y-4">
+      {stats && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="text-center">
+            <div className="text-2xl font-mono font-bold text-white tabular-nums">{stats.total_decisions}</div>
+            <div className="text-[10px] text-gray-600 uppercase tracking-widest">Total decisions</div>
+          </div>
+          <div className="text-center">
+            <div className="text-2xl font-mono font-bold text-red-400 tabular-nums">{stats.bans_last_24h}</div>
+            <div className="text-[10px] text-gray-600 uppercase tracking-widest">Bans 24h</div>
+          </div>
+          <div className="text-center">
+            <div className="text-sm font-mono text-orange-300 truncate">
+              {stats.top_scenarios[0]?.scenario?.split('/')[1] ?? '—'}
+            </div>
+            <div className="text-[10px] text-gray-600 uppercase tracking-widest">Top scenario</div>
+          </div>
+          <div className="text-center">
+            <div className="text-sm font-mono text-gray-300">
+              {stats.top_countries[0]
+                ? `${countryFlag(stats.top_countries[0].source_country)} ${stats.top_countries[0].source_country}`
+                : '—'}
+            </div>
+            <div className="text-[10px] text-gray-600 uppercase tracking-widest">Top country</div>
+          </div>
+        </div>
+      )}
+
+      {/* Recent decisions */}
+      {decisions.length > 0 && (
+        <div>
+          <div className="text-[10px] uppercase tracking-widest text-gray-600 mb-2">Recent decisions</div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs font-mono">
+              <thead>
+                <tr className="text-[10px] text-gray-600 border-b border-gray-800/60">
+                  <th className="pb-1.5 text-left pr-4">Source IP</th>
+                  <th className="pb-1.5 text-left pr-4 hidden sm:table-cell">Country</th>
+                  <th className="pb-1.5 text-left pr-4">Scenario</th>
+                  <th className="pb-1.5 text-left pr-4">Action</th>
+                  <th className="pb-1.5 text-right">Time</th>
+                </tr>
+              </thead>
+              <tbody>
+                {decisions.map(d => (
+                  <tr key={d.id} className="border-b border-gray-800/30 last:border-0">
+                    <td className="py-1.5 pr-4 text-orange-300">{d.source_ip}</td>
+                    <td className="py-1.5 pr-4 hidden sm:table-cell">
+                      {d.source_country ? `${countryFlag(d.source_country)} ${d.source_country}` : '—'}
+                    </td>
+                    <td className="py-1.5 pr-4 text-gray-400 max-w-[12rem] truncate">
+                      {d.scenario ?? '—'}
+                    </td>
+                    <td className="py-1.5 pr-4">{actionBadge(d.action)}</td>
+                    <td className="py-1.5 text-right text-gray-600">{fmtRelativeTime(d.created_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {onNavigate && (
+        <button onClick={() => onNavigate('crowdsec')}
+          className="text-[10px] font-mono text-cyan-500 hover:text-cyan-400 border border-cyan-800/30 rounded px-2 py-0.5 transition-colors">
+          View all CrowdSec decisions →
+        </button>
+      )}
+    </div>
+  );
+}
+
 // ── Server info strip ─────────────────────────────────────────────────────────
 
 function ServerInfoStrip({ server }: { server: ServerRow }) {
@@ -252,6 +501,8 @@ export function ServerDetailPage({
   summaries,
   onBack,
   onSelectServer,
+  onNavigate,
+  crowdSecEnabled,
 }: ServerDetailPageProps) {
 
   // Derive sorted history arrays from metrics
@@ -393,6 +644,20 @@ export function ServerDetailPage({
 
       {/* AI Insights */}
       <InsightsPanel summaries={summaries} />
+
+      {/* Security (Wazuh) */}
+      <div>
+        <h2 className="text-[10px] uppercase tracking-widest text-gray-600 mb-3">Security</h2>
+        <SecurityPanel serverId={server.id} onNavigate={onNavigate} />
+      </div>
+
+      {/* CrowdSec panel — only shown if CrowdSec is configured */}
+      {crowdSecEnabled && (
+        <div>
+          <h2 className="text-[10px] uppercase tracking-widest text-gray-600 mb-3">CrowdSec</h2>
+          <CrowdSecPanel serverId={server.id} onNavigate={onNavigate} />
+        </div>
+      )}
 
       {/* Containers */}
       <div>

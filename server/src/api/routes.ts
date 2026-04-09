@@ -968,6 +968,234 @@ export async function testWazuhConnection(
   return reply.send(result);
 }
 
+export async function getWazuhUnmatched(
+  _request: FastifyRequest,
+  reply: FastifyReply
+): Promise<FastifyReply> {
+  try {
+    // Wazuh agents not matched to any Fenris server
+    const { rows } = await query(
+      `SELECT wa.name, wa.status, wa.os_name, wa.os_version, wa.last_keep_alive, wa.group_name
+       FROM wazuh_agents wa
+       WHERE NOT EXISTS (
+         SELECT 1 FROM servers s
+         WHERE LOWER(s.wazuh_agent_name) = LOWER(wa.name)
+       )
+       ORDER BY wa.name`
+    );
+    return reply.send(rows);
+  } catch (error) {
+    console.error('Error fetching unmatched Wazuh agents:', error);
+    return reply.status(500).send({ error: 'Failed to fetch unmatched agents' });
+  }
+}
+
+// ── Server security endpoint ──────────────────────────────────────────────────
+
+export async function getServerSecurity(
+  request: FastifyRequest<{ Params: { id: string } }>,
+  reply: FastifyReply
+): Promise<FastifyReply> {
+  try {
+    const serverId = parseInt(request.params.id);
+    if (isNaN(serverId)) return reply.status(400).send({ error: 'Invalid server id' });
+
+    const serverRes = await query(
+      'SELECT wazuh_agent_name FROM servers WHERE id = $1',
+      [serverId]
+    );
+    if (serverRes.rows.length === 0) return reply.status(404).send({ error: 'Server not found' });
+
+    const { wazuh_agent_name } = serverRes.rows[0];
+
+    // List of all Wazuh agent names (for the "set alias" dropdown)
+    const allAgentsRes = await query('SELECT name FROM wazuh_agents ORDER BY name');
+    const available_agents: string[] = allAgentsRes.rows.map((r: any) => r.name);
+
+    if (!wazuh_agent_name) {
+      return reply.send({ wazuh_agent: null, active_alerts: 0, available_agents });
+    }
+
+    const [agentRes, alertsRes] = await Promise.all([
+      query(
+        `SELECT name, status, os_name, os_version, agent_version, last_keep_alive, group_name
+         FROM wazuh_agents WHERE LOWER(name) = LOWER($1)`,
+        [wazuh_agent_name]
+      ),
+      query(
+        `SELECT COUNT(*) AS total FROM alerts
+         WHERE metric_type = 'wazuh' AND acknowledged = FALSE AND message ILIKE $1`,
+        [`%${wazuh_agent_name}%`]
+      ),
+    ]);
+
+    const agent = agentRes.rows[0] ?? null;
+    const active_alerts = parseInt(alertsRes.rows[0]?.total ?? '0');
+
+    return reply.send({
+      wazuh_agent: agent
+        ? {
+            name:           agent.name,
+            status:         agent.status,
+            os:             agent.os_name
+                              ? `${agent.os_name}${agent.os_version ? ' ' + agent.os_version : ''}`
+                              : null,
+            version:        agent.agent_version,
+            last_keepalive: agent.last_keep_alive,
+            group:          agent.group_name,
+          }
+        : null,
+      active_alerts,
+      available_agents,
+    });
+  } catch (error) {
+    console.error('Error fetching server security:', error);
+    return reply.status(500).send({ error: 'Failed to fetch server security' });
+  }
+}
+
+export async function updateServer(
+  request: FastifyRequest<{ Params: { id: string }; Body: { wazuh_agent_name?: string | null } }>,
+  reply: FastifyReply
+): Promise<FastifyReply> {
+  try {
+    const user = (request as any).user;
+    if (!user || user.role !== 'admin') {
+      return reply.status(403).send({ error: 'Admin role required' });
+    }
+
+    const serverId = parseInt(request.params.id);
+    if (isNaN(serverId)) return reply.status(400).send({ error: 'Invalid server id' });
+
+    const { wazuh_agent_name } = request.body ?? {};
+
+    const { rows } = await query(
+      `UPDATE servers SET wazuh_agent_name = $1 WHERE id = $2
+       RETURNING id, name, ip_address, last_heartbeat, os_type, wazuh_agent_name`,
+      [wazuh_agent_name ?? null, serverId]
+    );
+
+    if (rows.length === 0) return reply.status(404).send({ error: 'Server not found' });
+    return reply.send(rows[0]);
+  } catch (error) {
+    console.error('Error updating server:', error);
+    return reply.status(500).send({ error: 'Failed to update server' });
+  }
+}
+
+// ── CrowdSec endpoints ────────────────────────────────────────────────────────
+
+let crowdSecMonitor: import('../monitors/crowdsec.js').CrowdSecMonitor | null = null;
+
+export function setCrowdSecMonitor(m: import('../monitors/crowdsec.js').CrowdSecMonitor): void {
+  crowdSecMonitor = m;
+}
+
+export function getCrowdSecMonitor(): import('../monitors/crowdsec.js').CrowdSecMonitor | null {
+  return crowdSecMonitor;
+}
+
+export async function listCrowdSecDecisions(
+  request: FastifyRequest,
+  reply: FastifyReply
+): Promise<FastifyReply> {
+  try {
+    const serverIdParam = (request.query as any).server_id;
+    const limit = Math.min(parseInt((request.query as any).limit || '50'), 200);
+
+    let result;
+    if (serverIdParam) {
+      result = await query(
+        `SELECT cd.*, s.name AS server_name
+         FROM crowdsec_decisions cd
+         JOIN servers s ON s.id = cd.server_id
+         WHERE cd.server_id = $1
+         ORDER BY cd.created_at DESC LIMIT $2`,
+        [parseInt(serverIdParam), limit]
+      );
+    } else {
+      result = await query(
+        `SELECT cd.*, s.name AS server_name
+         FROM crowdsec_decisions cd
+         JOIN servers s ON s.id = cd.server_id
+         ORDER BY cd.created_at DESC LIMIT $1`,
+        [limit]
+      );
+    }
+    return reply.send(result.rows);
+  } catch (error) {
+    console.error('Error listing CrowdSec decisions:', error);
+    return reply.status(500).send({ error: 'Failed to list decisions' });
+  }
+}
+
+export async function getCrowdSecStats(
+  request: FastifyRequest,
+  reply: FastifyReply
+): Promise<FastifyReply> {
+  try {
+    const serverIdParam = (request.query as any).server_id;
+    const params: any[] = serverIdParam ? [parseInt(serverIdParam)] : [];
+    const where = serverIdParam ? 'WHERE server_id = $1' : '';
+    const and   = serverIdParam ? 'AND server_id = $1' : '';
+
+    const [totalRes, bans24hRes, scenariosRes, countriesRes] = await Promise.all([
+      query(`SELECT COUNT(*) AS total FROM crowdsec_decisions ${where}`, params),
+      query(`SELECT COUNT(*) AS total FROM crowdsec_decisions WHERE action = 'ban' AND created_at > NOW() - INTERVAL '24 hours' ${and}`, params),
+      query(`SELECT scenario, COUNT(*) AS count FROM crowdsec_decisions ${where} GROUP BY scenario ORDER BY count DESC LIMIT 5`, params),
+      query(`SELECT source_country, COUNT(*) AS count FROM crowdsec_decisions ${where} GROUP BY source_country ORDER BY count DESC LIMIT 5`, params),
+    ]);
+
+    return reply.send({
+      total_decisions:  parseInt(totalRes.rows[0]?.total ?? '0'),
+      bans_last_24h:    parseInt(bans24hRes.rows[0]?.total ?? '0'),
+      top_scenarios:    scenariosRes.rows,
+      top_countries:    countriesRes.rows.filter((r: any) => r.source_country),
+    });
+  } catch (error) {
+    console.error('Error fetching CrowdSec stats:', error);
+    return reply.status(500).send({ error: 'Failed to fetch CrowdSec stats' });
+  }
+}
+
+export async function testCrowdSecConnection(
+  request: FastifyRequest<{ Body: { name: string } }>,
+  reply: FastifyReply
+): Promise<FastifyReply> {
+  try {
+    const user = (request as any).user;
+    if (!user || !['admin', 'operator'].includes(user.role)) {
+      return reply.status(403).send({ error: 'Operator or admin role required' });
+    }
+    const { name } = request.body ?? {};
+    if (!name) return reply.status(400).send({ error: 'name is required' });
+
+    if (!crowdSecMonitor) {
+      return reply.status(503).send({ ok: false, error: 'CrowdSec monitor not running (disabled or not configured)' });
+    }
+    const result = await crowdSecMonitor.testConnection(name);
+    return reply.send(result);
+  } catch (error) {
+    console.error('Error testing CrowdSec connection:', error);
+    return reply.status(500).send({ error: 'Failed to test connection' });
+  }
+}
+
+export async function getCrowdSecStatus(
+  _request: FastifyRequest,
+  reply: FastifyReply
+): Promise<FastifyReply> {
+  try {
+    if (!crowdSecMonitor) {
+      return reply.send({ enabled: false, instances: [] });
+    }
+    return reply.send(crowdSecMonitor.getStatus());
+  } catch (error) {
+    console.error('Error fetching CrowdSec status:', error);
+    return reply.status(500).send({ error: 'Failed to fetch CrowdSec status' });
+  }
+}
+
 // ── Incidents endpoints ───────────────────────────────────────────────────────
 
 const INCIDENT_LIST_SQL = `
