@@ -1,5 +1,6 @@
 import React from 'react';
 import { View } from '../types';
+import { useAuth } from '../auth';
 
 // ── SVG icons (outline, 20×20) ────────────────────────────────────────────────
 
@@ -87,6 +88,57 @@ interface SidebarProps {
   wazuhEnabled?: boolean;
 }
 
+// ── User bar ──────────────────────────────────────────────────────────────────
+
+function IconLogout() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
+      strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/>
+      <polyline points="16 17 21 12 16 7"/>
+      <line x1="21" y1="12" x2="9" y2="12"/>
+    </svg>
+  );
+}
+
+function UserBar({ collapsed }: { collapsed: boolean }) {
+  const { user, logout } = useAuth();
+  if (!user) return null;
+
+  const roleColor = user.role === 'admin' ? 'text-cyan-400'
+                  : user.role === 'operator' ? 'text-yellow-400'
+                  : 'text-gray-400';
+
+  return (
+    <div className={`border-t border-gray-800/60 ${collapsed ? 'py-2 flex flex-col items-center gap-1' : 'px-3 py-2'}`}>
+      {!collapsed && (
+        <div className="flex items-center justify-between">
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-gray-300 truncate">{user.username}</p>
+            <p className={`text-[10px] font-mono ${roleColor}`}>{user.role}</p>
+          </div>
+          <button
+            onClick={() => logout()}
+            title="Sign out"
+            className="flex-shrink-0 text-gray-600 hover:text-red-400 transition-colors ml-2 p-1 rounded"
+          >
+            <IconLogout />
+          </button>
+        </div>
+      )}
+      {collapsed && (
+        <button
+          onClick={() => logout()}
+          title={`${user.username} — Sign out`}
+          className="text-gray-600 hover:text-red-400 transition-colors p-1 rounded"
+        >
+          <IconLogout />
+        </button>
+      )}
+    </div>
+  );
+}
+
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 
 export function Sidebar({ view, onNavigate, activeAlerts, activeIncidents = 0, collapsed, onToggleCollapse, wazuhEnabled }: SidebarProps) {
@@ -150,6 +202,9 @@ export function Sidebar({ view, onNavigate, activeAlerts, activeIncidents = 0, c
             );
           })}
         </nav>
+
+        {/* User + logout */}
+        <UserBar collapsed={collapsed} />
 
         {/* Collapse toggle */}
         <button

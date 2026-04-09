@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { View, ServerRow, MetricRow, AlertRow, DockerSnapshot, SummaryRow } from './types';
 import { apiFetch } from './api';
+import { useAuth } from './auth';
+import { LoginPage } from './pages/LoginPage';
 import { Sidebar } from './layout/Sidebar';
 import { TopBar } from './layout/TopBar';
 import { OverviewPage } from './pages/OverviewPage';
@@ -15,6 +17,24 @@ import { IncidentsPage } from './pages/IncidentsPage';
 const REFRESH_MS = 30_000;
 
 export default function App() {
+  const { user, loading: authLoading } = useAuth();
+
+  // Show loading spinner while validating stored JWT
+  if (authLoading) {
+    return (
+      <div className="h-screen w-screen bg-page flex items-center justify-center">
+        <div className="w-6 h-6 rounded-full border-2 border-cyan-500 border-t-transparent animate-spin" />
+      </div>
+    );
+  }
+
+  // Not logged in — show login page
+  if (!user) return <LoginPage />;
+
+  return <Dashboard />;
+}
+
+function Dashboard() {
   // ── Navigation ──────────────────────────────────────────────────────────────
   const [view, setView]                     = useState<View>('incidents');
   const [selectedServerId, setSelectedServerId] = useState<number | null>(null);
