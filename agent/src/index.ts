@@ -102,7 +102,7 @@ async function collect(
   const dockerMetric = await dockerCollector.collectAll();
   if (dockerMetric) metrics.push(dockerMetric);
 
-  return { server_name: serverName, host_ip: hostIP, metrics };
+  return { server_name: serverName, host_ip: hostIP, os_type: 'linux', metrics };
 }
 
 async function run(): Promise<void> {

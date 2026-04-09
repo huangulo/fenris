@@ -40,6 +40,7 @@ export interface ServerRow {
   name: string;
   ip_address: string;
   last_heartbeat: string | null;
+  os_type?: string | null;
 }
 
 export interface ContainerStats {
