@@ -37,6 +37,10 @@ import {
   listUsers, createUser, updateUser, resetPassword, deleteUser,
   listAuditLog,
 } from './api/users-routes.js';
+import {
+  listTickets, getTicket, createTicket, updateTicket, deleteTicket,
+  addNote, startTicket, resolveTicket, getStats, getReport, getRequesters,
+} from './api/support-routes.js';
 // Side-effect import: augments FastifyRequest with .user
 import './auth/fastify.d.js';
 
@@ -333,6 +337,19 @@ async function start(): Promise<void> {
     server.get('/api/v1/crowdsec/stats',           getCrowdSecStats);
     server.get('/api/v1/crowdsec/status',          getCrowdSecStatus);
     server.post('/api/v1/crowdsec/test-connection', testCrowdSecConnection);
+
+    // Support tickets
+    server.get('/api/v1/support/tickets',               listTickets);
+    server.post('/api/v1/support/tickets',              createTicket);
+    server.get('/api/v1/support/tickets/:id',           getTicket);
+    server.put('/api/v1/support/tickets/:id',           updateTicket);
+    server.delete('/api/v1/support/tickets/:id',        deleteTicket);
+    server.post('/api/v1/support/tickets/:id/notes',    addNote);
+    server.post('/api/v1/support/tickets/:id/start',    startTicket);
+    server.post('/api/v1/support/tickets/:id/resolve',  resolveTicket);
+    server.get('/api/v1/support/stats',                 getStats);
+    server.get('/api/v1/support/report',                getReport);
+    server.get('/api/v1/support/requesters',            getRequesters);
 
     // ── Graceful shutdown ─────────────────────────────────────────────────────
     for (const signal of ['SIGINT', 'SIGTERM']) {
