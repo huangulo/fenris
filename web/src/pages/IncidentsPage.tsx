@@ -533,8 +533,8 @@ export function IncidentsPage({ servers, onActiveCountChange }: IncidentsPagePro
   const load = useCallback(async () => {
     try {
       const url = filterServer != null
-        ? `/api/v1/incidents?server_id=${filterServer}&limit=200`
-        : '/api/v1/incidents?limit=200';
+        ? `/api/v1/incidents?server_id=${filterServer}&limit=100`
+        : '/api/v1/incidents';
       const res = await apiFetch(url);
       if (res.ok) {
         const data: IncidentRow[] = await res.json();
@@ -592,8 +592,25 @@ export function IncidentsPage({ servers, onActiveCountChange }: IncidentsPagePro
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[50vh]">
-        <div className="w-5 h-5 rounded-full border-2 border-cyan-500 border-t-transparent animate-spin" />
+      <div className="p-6 max-w-7xl mx-auto">
+        <div className="flex items-center gap-3 mb-6">
+          <div className="h-6 w-24 bg-gray-800/60 rounded animate-pulse" />
+          <div className="h-5 w-16 bg-gray-800/40 rounded-full animate-pulse" />
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {[0, 1, 2].map(col => (
+            <div key={col} className="space-y-2">
+              <div className="h-4 w-28 bg-gray-800/60 rounded animate-pulse mb-3" />
+              {[0, 1, 2].map(row => (
+                <div key={row} className="card p-3 space-y-2">
+                  <div className="h-3 bg-gray-800/60 rounded animate-pulse w-3/4" />
+                  <div className="h-2 bg-gray-800/40 rounded animate-pulse w-1/2" />
+                  <div className="h-6 bg-gray-800/30 rounded animate-pulse mt-2" />
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
       </div>
     );
   }

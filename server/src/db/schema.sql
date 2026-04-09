@@ -179,6 +179,7 @@ CREATE TABLE IF NOT EXISTS incidents (
 CREATE INDEX IF NOT EXISTS idx_incidents_state      ON incidents(state);
 CREATE INDEX IF NOT EXISTS idx_incidents_server_id  ON incidents(server_id);
 CREATE INDEX IF NOT EXISTS idx_incidents_started_at ON incidents(started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_incidents_state_started ON incidents(state, started_at DESC);
 
 -- Add incident_id to alerts (idempotent)
 DO $$ BEGIN
