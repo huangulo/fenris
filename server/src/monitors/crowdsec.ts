@@ -1,4 +1,5 @@
 import fetch from 'node-fetch';
+import geoip from 'geoip-lite';
 import { query } from '../db/client.js';
 import { Alert } from '../types.js';
 import { AlertDispatcher } from '../alerts/dispatcher.js';
@@ -53,6 +54,14 @@ function parseGoDuration(d: string): number {
     ms += (parseFloat(m[3] ?? '0'))   * 1_000;
   }
   return ms;
+}
+
+/** Resolve a country code for an IP.  Returns "LAN" for RFC-1918/loopback, null if unknown. */
+function resolveCountry(ip: string): string | null {
+  if (/^(127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|::1$|fc[0-9a-f]{2}:|fd[0-9a-f]{2}:)/.test(ip)) {
+    return 'LAN';
+  }
+  return geoip.lookup(ip)?.country ?? null;
 }
 
 const MAX_BACKOFF_MS    = 5 * 60_000;   // 5 min
@@ -178,6 +187,9 @@ export class CrowdSecMonitor {
         expiresAt = new Date(Date.now() + parseGoDuration(d.duration));
       }
 
+      // Prefer country from the decision payload; fall back to geoip lookup
+      const country = d.country ?? resolveCountry(d.value);
+
       await query(
         `INSERT INTO crowdsec_decisions
            (server_id, decision_id, source_ip, source_country, scenario, action, duration, expires_at)
@@ -190,7 +202,7 @@ export class CrowdSecMonitor {
            duration       = EXCLUDED.duration,
            expires_at     = EXCLUDED.expires_at`,
         [
-          state.serverId, d.id, d.value, d.country ?? null,
+          state.serverId, d.id, d.value, country,
           d.scenario, d.type, d.duration, expiresAt,
         ]
       );
