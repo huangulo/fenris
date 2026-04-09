@@ -12,6 +12,7 @@ import { ContainersPage } from './pages/ContainersPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { UptimePage } from './pages/UptimePage';
 import { WazuhPage } from './pages/WazuhPage';
+import { CrowdSecPage } from './pages/CrowdSecPage';
 import { IncidentsPage } from './pages/IncidentsPage';
 
 const REFRESH_MS = 30_000;
@@ -49,7 +50,8 @@ function Dashboard() {
   const [serverDocker,  setServerDocker]  = useState<DockerSnapshot>({ containers: [], timestamp: null });
   const [serverConfig,  setServerConfig]  = useState<Record<string, unknown> | null>(null);
   const [summaries,     setSummaries]     = useState<SummaryRow[]>([]);
-  const [wazuhEnabled,  setWazuhEnabled]  = useState(false);
+  const [wazuhEnabled,    setWazuhEnabled]    = useState(false);
+  const [crowdSecEnabled, setCrowdSecEnabled] = useState(false);
 
   // ── UI state ────────────────────────────────────────────────────────────────
   const [loading,      setLoading]      = useState(true);
@@ -124,6 +126,16 @@ function Dashboard() {
     } catch { /* silent */ }
   }, []);
 
+  const checkCrowdSecEnabled = useCallback(async () => {
+    try {
+      const res = await apiFetch('/api/v1/crowdsec/status');
+      if (res.ok) {
+        const data = await res.json() as { enabled?: boolean };
+        setCrowdSecEnabled(data.enabled ?? false);
+      }
+    } catch { /* silent */ }
+  }, []);
+
   const fetchSummaries = useCallback(async (serverId?: number) => {
     try {
       const url = serverId != null
@@ -161,9 +173,10 @@ function Dashboard() {
   useEffect(() => {
     refreshAll();
     checkWazuhEnabled();
+    checkCrowdSecEnabled();
     const t = setInterval(refreshAll, REFRESH_MS);
     return () => clearInterval(t);
-  }, [refreshAll, checkWazuhEnabled]);
+  }, [refreshAll, checkWazuhEnabled, checkCrowdSecEnabled]);
 
   // When a server is selected (server detail view), fetch its specific data
   useEffect(() => {
@@ -250,6 +263,8 @@ function Dashboard() {
             summaries={summaries.filter(s => s.server_id === selectedServerId)}
             onBack={() => navigateTo('overview')}
             onSelectServer={(id) => { setSelectedServerId(id); }}
+            onNavigate={(v) => navigateTo(v as any)}
+            crowdSecEnabled={crowdSecEnabled}
           />
         );
       case 'alerts':
@@ -275,6 +290,8 @@ function Dashboard() {
         return <UptimePage />;
       case 'wazuh':
         return <WazuhPage />;
+      case 'crowdsec':
+        return <CrowdSecPage />;
       case 'settings':
         return <SettingsPage config={serverConfig} />;
       default:
@@ -292,6 +309,7 @@ function Dashboard() {
         collapsed={sidebarCollapsed}
         onToggleCollapse={() => setSidebarCollapsed(c => !c)}
         wazuhEnabled={wazuhEnabled}
+        crowdSecEnabled={crowdSecEnabled}
       />
 
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
