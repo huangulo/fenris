@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { apiFetch } from '../api';
 import { useAuth, hasRole } from '../auth';
-import { WazuhStatus } from '../types';
+import { WazuhStatus, CrowdSecStatus } from '../types';
 import { fmtRelativeTime } from '../utils';
 
 interface SettingsPageProps {
@@ -418,13 +418,19 @@ function TestAlertPanel() {
 
 // ── Wazuh panel ───────────────────────────────────────────────────────────────
 
+interface UnmatchedAgent {
+  name: string; status: string; os_name: string | null; last_keep_alive: string | null;
+}
+
 function WazuhPanel() {
   const [status,     setStatus]     = useState<WazuhStatus | null>(null);
   const [testing,    setTesting]    = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; agentCount?: number; error?: string } | null>(null);
+  const [unmatched,  setUnmatched]  = useState<UnmatchedAgent[]>([]);
 
   useEffect(() => {
     apiFetch('/api/v1/wazuh/status').then(r => r.ok ? r.json() : null).then(d => setStatus(d)).catch(() => {});
+    apiFetch('/api/v1/wazuh/unmatched').then(r => r.ok ? r.json() : []).then(d => setUnmatched(d)).catch(() => {});
   }, []);
 
   const runTest = async () => {
@@ -445,32 +451,156 @@ function WazuhPanel() {
   }
 
   return (
-    <div className="card p-4 space-y-3">
-      <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs font-mono">
-        <span className="text-gray-500">Connection</span>
-        <span className={status.last_poll_ok ? 'text-emerald-400' : 'text-red-400'}>
-          {status.last_poll_ok ? 'Connected' : 'Unreachable'}
-        </span>
-        <span className="text-gray-500">Manager URL</span>
-        <span className="text-gray-300 truncate">{status.manager_url ?? '—'}</span>
-        <span className="text-gray-500">Last Poll</span>
-        <span className="text-gray-300">{status.last_poll_at ? fmtRelativeTime(status.last_poll_at) : '—'}</span>
-        <span className="text-gray-500">Agents</span>
-        <span className="text-gray-300">{status.total}</span>
-        {status.last_poll_error && (
-          <><span className="text-gray-500">Error</span><span className="text-red-400 text-[10px]">{status.last_poll_error}</span></>
+    <div className="space-y-3">
+      <div className="card p-4 space-y-3">
+        <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs font-mono">
+          <span className="text-gray-500">Connection</span>
+          <span className={status.last_poll_ok ? 'text-emerald-400' : 'text-red-400'}>
+            {status.last_poll_ok ? 'Connected' : 'Unreachable'}
+          </span>
+          <span className="text-gray-500">Manager URL</span>
+          <span className="text-gray-300 truncate">{status.manager_url ?? '—'}</span>
+          <span className="text-gray-500">Last Poll</span>
+          <span className="text-gray-300">{status.last_poll_at ? fmtRelativeTime(status.last_poll_at) : '—'}</span>
+          <span className="text-gray-500">Agents</span>
+          <span className="text-gray-300">{status.total}</span>
+          {status.last_poll_error && (
+            <><span className="text-gray-500">Error</span><span className="text-red-400 text-[10px]">{status.last_poll_error}</span></>
+          )}
+        </div>
+        <button onClick={runTest} disabled={testing}
+          className="text-xs font-mono bg-violet-500/10 hover:bg-violet-500/20 disabled:opacity-50 text-violet-400 border border-violet-500/30 rounded-lg px-4 py-1.5 transition-colors flex items-center gap-2">
+          {testing && <span className="w-3 h-3 rounded-full border border-violet-400 border-t-transparent animate-spin" />}
+          Test Connection
+        </button>
+        {testResult && (
+          <p className={`text-xs font-mono ${testResult.ok ? 'text-emerald-400' : 'text-red-400'}`}>
+            {testResult.ok ? `Connected — ${testResult.agentCount} agent(s) reachable` : `Failed: ${testResult.error}`}
+          </p>
         )}
       </div>
-      <button onClick={runTest} disabled={testing}
-        className="text-xs font-mono bg-violet-500/10 hover:bg-violet-500/20 disabled:opacity-50 text-violet-400 border border-violet-500/30 rounded-lg px-4 py-1.5 transition-colors flex items-center gap-2">
-        {testing && <span className="w-3 h-3 rounded-full border border-violet-400 border-t-transparent animate-spin" />}
-        Test Connection
-      </button>
-      {testResult && (
-        <p className={`text-xs font-mono ${testResult.ok ? 'text-emerald-400' : 'text-red-400'}`}>
-          {testResult.ok ? `Connected — ${testResult.agentCount} agent(s) reachable` : `Failed: ${testResult.error}`}
-        </p>
+
+      {/* Unmatched Wazuh agents */}
+      {unmatched.length > 0 && (
+        <div>
+          <p className="text-[10px] uppercase tracking-widest text-gray-600 mb-2">
+            Unmatched Agents ({unmatched.length})
+          </p>
+          <div className="card overflow-hidden">
+            <table className="w-full text-xs font-mono">
+              <thead>
+                <tr className="border-b border-gray-800/60 text-[10px] text-gray-600">
+                  <th className="px-3 py-2 text-left">Agent name</th>
+                  <th className="px-3 py-2 text-left hidden sm:table-cell">Status</th>
+                  <th className="px-3 py-2 text-left hidden md:table-cell">OS</th>
+                  <th className="px-3 py-2 text-left hidden lg:table-cell">Last keepalive</th>
+                </tr>
+              </thead>
+              <tbody>
+                {unmatched.map(a => (
+                  <tr key={a.name} className="border-b border-gray-800/40 last:border-0">
+                    <td className="px-3 py-2 text-gray-300">{a.name}</td>
+                    <td className="px-3 py-2 hidden sm:table-cell">
+                      <span className={`text-[10px] px-1 py-0.5 rounded border ${
+                        a.status === 'active'
+                          ? 'text-emerald-400 border-emerald-800/40'
+                          : 'text-red-400 border-red-800/40'
+                      }`}>{a.status}</span>
+                    </td>
+                    <td className="px-3 py-2 text-gray-500 hidden md:table-cell">{a.os_name ?? '—'}</td>
+                    <td className="px-3 py-2 text-gray-600 hidden lg:table-cell">
+                      {a.last_keep_alive ? fmtRelativeTime(a.last_keep_alive) : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-[10px] text-gray-600 font-mono mt-1">
+            These Wazuh agents have no matching Fenris server. Go to a server's detail page → Security to set an alias.
+          </p>
+        </div>
       )}
+    </div>
+  );
+}
+
+// ── CrowdSec panel ─────────────────────────────────────────────────────────────
+
+function CrowdSecSettingsPanel() {
+  const [status,     setStatus]     = useState<CrowdSecStatus | null>(null);
+  const [testingIdx, setTestingIdx] = useState<number | null>(null);
+  const [testResults, setTestResults] = useState<Record<number, { ok: boolean; decision_count?: number; error?: string }>>({});
+
+  useEffect(() => {
+    apiFetch('/api/v1/crowdsec/status').then(r => r.ok ? r.json() : null).then(d => setStatus(d)).catch(() => {});
+  }, []);
+
+  const runTest = async (idx: number, name: string) => {
+    setTestingIdx(idx);
+    try {
+      const res = await apiFetch('/api/v1/crowdsec/test-connection', {
+        method: 'POST',
+        body: JSON.stringify({ name }),
+      });
+      const data = await res.json();
+      setTestResults(prev => ({ ...prev, [idx]: data }));
+    } catch (e) {
+      setTestResults(prev => ({ ...prev, [idx]: { ok: false, error: (e as Error).message } }));
+    } finally {
+      setTestingIdx(null);
+    }
+  };
+
+  if (!status?.enabled) {
+    return (
+      <div className="card p-4 text-xs font-mono text-gray-500">
+        CrowdSec integration is disabled. Set <code className="text-gray-400">crowdsec.enabled: true</code> in fenris.yaml to activate.
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {status.instances.map((inst, idx) => {
+        const tr = testResults[idx];
+        return (
+          <div key={inst.name} className="card p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-mono font-semibold text-gray-300">{inst.name}</span>
+              <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${
+                inst.last_poll_ok
+                  ? 'text-emerald-400 border-emerald-800/40 bg-emerald-900/10'
+                  : 'text-red-400 border-red-800/40 bg-red-900/10'
+              }`}>
+                {inst.last_poll_ok ? 'connected' : 'error'}
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs font-mono">
+              <span className="text-gray-500">Last poll</span>
+              <span className="text-gray-300">{inst.last_poll_at ? fmtRelativeTime(inst.last_poll_at) : '—'}</span>
+              {inst.server_id && (
+                <><span className="text-gray-500">Server ID</span><span className="text-gray-300">{inst.server_id}</span></>
+              )}
+              {inst.last_poll_error && (
+                <><span className="text-gray-500">Error</span><span className="text-red-400 text-[10px]">{inst.last_poll_error}</span></>
+              )}
+            </div>
+            <div className="flex gap-2 items-center">
+              <button onClick={() => runTest(idx, inst.name)} disabled={testingIdx === idx}
+                className="text-xs font-mono bg-cyan-500/10 hover:bg-cyan-500/20 disabled:opacity-50 text-cyan-400 border border-cyan-500/30 rounded-lg px-3 py-1 transition-colors flex items-center gap-2">
+                {testingIdx === idx && <span className="w-3 h-3 rounded-full border border-cyan-400 border-t-transparent animate-spin" />}
+                Test Connection
+              </button>
+              {tr && (
+                <span className={`text-xs font-mono ${tr.ok ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {tr.ok ? `OK — ${tr.decision_count} decision(s)` : `Failed: ${tr.error}`}
+                </span>
+              )}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -507,6 +637,10 @@ export function SettingsPage({ config }: SettingsPageProps) {
 
       <Section title="Wazuh Integration">
         <WazuhPanel />
+      </Section>
+
+      <Section title="CrowdSec Integration">
+        <CrowdSecSettingsPanel />
       </Section>
 
       <Section title="Server Configuration">

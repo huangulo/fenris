@@ -4,6 +4,7 @@ import { query } from '../db/client.js';
 import { Alert } from '../types.js';
 import { AlertDispatcher } from '../alerts/dispatcher.js';
 import { parseDurationMs } from '../engine/predictor.js';
+import { matchWazuhAgents } from '../engine/wazuh-matcher.js';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -168,6 +169,11 @@ export class WazuhMonitor {
         console.error(`[wazuh] processAgent(${agent.id}) error:`, err)
       );
     }
+
+    // Match Wazuh agents to Fenris servers by hostname after every poll
+    matchWazuhAgents().catch(err =>
+      console.error('[wazuh-matcher] matching failed:', err)
+    );
   }
 
   private async processAgent(agent: WazuhApiAgent): Promise<void> {
