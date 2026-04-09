@@ -1,4 +1,4 @@
-export type View = 'incidents' | 'overview' | 'server' | 'alerts' | 'containers' | 'uptime' | 'wazuh' | 'settings';
+export type View = 'incidents' | 'overview' | 'server' | 'alerts' | 'containers' | 'uptime' | 'wazuh' | 'crowdsec' | 'settings';
 
 export interface MetricRow {
   id: number;
@@ -166,4 +166,51 @@ export interface WazuhStatus {
   last_poll_ok: boolean;
   last_poll_error: string | null;
   manager_url: string | null;
+}
+
+export interface WazuhSecurityInfo {
+  wazuh_agent: {
+    name:           string;
+    status:         string;
+    os:             string | null;
+    version:        string | null;
+    last_keepalive: string | null;
+    group:          string | null;
+  } | null;
+  active_alerts:   number;
+  available_agents: string[];
+}
+
+export interface CrowdSecDecisionRow {
+  id:             number;
+  server_id:      number;
+  server_name?:   string;
+  decision_id:    number;
+  source_ip:      string;
+  source_country: string | null;
+  scenario:       string | null;
+  action:         string | null;
+  duration:       string | null;
+  expires_at:     string | null;
+  created_at:     string;
+}
+
+export interface CrowdSecStats {
+  total_decisions: number;
+  bans_last_24h:   number;
+  top_scenarios:   Array<{ scenario: string; count: number }>;
+  top_countries:   Array<{ source_country: string; count: number }>;
+}
+
+export interface CrowdSecInstanceStatus {
+  name:            string;
+  server_id:       number | null;
+  last_poll_at:    string | null;
+  last_poll_ok:    boolean;
+  last_poll_error: string | null;
+}
+
+export interface CrowdSecStatus {
+  enabled:   boolean;
+  instances: CrowdSecInstanceStatus[];
 }
