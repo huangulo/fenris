@@ -37,7 +37,7 @@ export default function App() {
 
 function Dashboard() {
   // ── Navigation ──────────────────────────────────────────────────────────────
-  const [view, setView]                     = useState<View>('incidents');
+  const [view, setView]                     = useState<View>('overview');
   const [selectedServerId, setSelectedServerId] = useState<number | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
