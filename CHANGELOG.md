@@ -4,6 +4,79 @@ All notable changes to Fenris are documented here.
 
 ---
 
+## [0.4.0] — 2026-04-11
+
+### Docker — deep container monitoring
+
+- Per-container history charts with inline row expansion: CPU %, memory MB/%, network rx/tx rate (4 Recharts AreaCharts per container)
+- Container restart tracking — `container_events` table records every state transition, restart, image change, and removal
+- Restart counts API: `GET /api/v1/docker/containers/:server_id/:name/restarts` returns 24 h and 7 d totals
+- **Flapping alerts** — warning alert fires when a container restarts ≥ 3 times in 15 minutes; 30-minute cooldown per container
+- **Image change alerts** — info alert when a running container's image hash changes between polls; 1-hour cooldown
+- Volume/disk usage collection — opt-in (`collect_volume_sizes: true`); sizes derived via `du`; results cached 5 minutes per container; Windows skipped automatically
+- Container uptime fix — `started_at` from Docker inspect (`State.StartedAt`) replaces creation time; capped at host uptime to survive agent restarts
+- **Top consumers view** — `GET /api/v1/docker/top?metric=cpu|memory|network` returns top 5 across all servers; Containers page shows three cards above the table
+- Container events feed — `GET /api/v1/docker/events` with `?server_id=` and `?container_name=` filters; timeline shown in detail panel
+- 90-day retention job for `container_events`
+
+### Dashboard
+
+- Containers page: top consumers cards (CPU % / Memory MB / Network I/O) with loading skeletons; always visible with "No data" state
+- Server detail: container rows are now clickable — expands inline to show 4 history charts + volumes table + events timeline
+
+### Windows agent
+
+- Go binary (`agent-windows/`) replaces the PowerShell proof-of-concept
+- Collects CPU, memory, disk, and network via `gopsutil`
+- Host uptime via `gopsutil/host.BootTime()` — transmitted in agent payload to cap container uptimes on the server side
+- Registers as a Windows Service; managed with `Start-Service FenrisAgent` / `Stop-Service FenrisAgent`
+- Config at `C:\ProgramData\Fenris\fenris-agent.yaml`
+- PowerShell one-liner installer (`agent-windows/install.ps1`)
+
+---
+
+## [0.3.0] — 2026-04-05
+
+### Support tickets module
+
+- Full helpdesk ticketing: create, assign, update status, resolve, and cancel tickets
+- Categories: hardware, software, network, email, printer, account, training, other
+- Priorities: low, normal, high, urgent
+- Time tracking: log minutes per note; totals aggregate to per-ticket and per-technician stats
+- Stats / reports page: breakdowns by status, category, priority, technician, and top requesters
+- Schema: `support_tickets` and `support_ticket_notes` tables with indexes
+
+### Security integrations
+
+- **Wazuh SIEM** — polls Wazuh manager REST API on configurable interval; imports agent inventory and MITRE-mapped alerts; per-agent alert badge in the dashboard; `wazuh_agents` and `wazuh_agent_alerts` tables
+- **CrowdSec threat intelligence** — polls CrowdSec LAPI; imports active decisions (bans, captchas, throttles); top scenarios and countries cards; `crowdsec_decisions` table; multiple LAPI instances supported
+- Both integrations surface security context on the Server Detail page alongside system metrics
+
+### Incident management
+
+- Incidents page: create, investigate, and resolve incidents; link related alerts; assign to a user
+- AI summary button — calls OpenAI with the incident's recent alerts; summary stored and displayed inline (requires `ai.enabled: true` in config)
+- Notes with full text and audit trail
+- `incidents` and `incident_notes` tables
+
+### Multi-user auth and RBAC
+
+- `users` table with bcrypt passwords; roles: `admin`, `operator`, `viewer`
+- JWT sessions (24 h); `POST /api/v1/auth/login` issues token
+- Role-gated endpoints (admin-only for user management and config; operator for acknowledge/create; viewer read-only)
+- `ensureDefaultAdmin()` — on first start, creates `admin` user with random 16-char hex password and prints it once to stdout
+- Audit log: `audit_log` table records sensitive actions with user, IP, resource, and metadata
+
+### Uptime monitoring
+
+- `monitors` table: HTTP/HTTPS endpoints with method, interval, timeout, expected status, and custom headers
+- Background checker runs monitors on their configured interval; records results in `monitor_checks`
+- TLS certificate expiry detection and storage
+- 24 h / 7 d / 30 d uptime percentage computed from check history
+- Uptime page in dashboard: status table, response time, cert expiry, uptime badges
+
+---
+
 ## [0.2.0] — 2026-04-01
 
 ### Dashboard — complete rewrite
