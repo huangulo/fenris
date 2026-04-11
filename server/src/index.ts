@@ -9,6 +9,7 @@ import {
   listServers, getAllMetrics, getServerMetrics,
   listAlerts, acknowledgeAlert, getConfig,
   getDockerContainers, getDockerContainerHistory,
+  getContainerHistory, listDockerEvents, getDockerTop, getContainerRestartCount,
   getAlertSummary, listSummaries, sendTestAlert,
   getStatus, getServerStatus,
   listMonitors, createMonitor, updateMonitor, deleteMonitor, getMonitorChecks, testMonitorNow,
@@ -133,6 +134,8 @@ async function startRetentionJob(): Promise<void> {
       console.log('Retention: deleted', c.rowCount, 'monitor_checks older than 90 days');
       const cs = await query("DELETE FROM crowdsec_decisions WHERE expires_at IS NOT NULL AND expires_at < NOW()");
       console.log('Retention: deleted', cs.rowCount, 'expired crowdsec_decisions');
+      const ce = await query("DELETE FROM container_events WHERE created_at < NOW() - INTERVAL '90 days'");
+      console.log('Retention: deleted', ce.rowCount, 'container_events older than 90 days');
     } catch (err) { console.error('Retention job error:', err); }
   };
   retentionInterval = setInterval(runCleanup, 60 * 60 * 1000);
@@ -298,6 +301,10 @@ async function start(): Promise<void> {
     server.get('/api/v1/summaries',       listSummaries);
     server.get('/api/v1/docker/containers', getDockerContainers);
     server.get('/api/v1/docker/containers/:name/metrics', getDockerContainerHistory);
+    server.get('/api/v1/docker/containers/:server_id/:container_name/history', getContainerHistory);
+    server.get('/api/v1/docker/containers/:server_id/:container_name/restarts', getContainerRestartCount);
+    server.get('/api/v1/docker/events', listDockerEvents);
+    server.get('/api/v1/docker/top', getDockerTop);
 
     // Operator+
     server.post('/api/v1/alerts/:id/acknowledge', acknowledgeAlert);
