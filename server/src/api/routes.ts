@@ -1713,9 +1713,11 @@ export async function getDockerTop(
       return reply.status(400).send({ error: 'metric must be one of: cpu, memory, network' });
     }
 
-    const orderExpr = metric === 'cpu'    ? '(elem->>\'cpu_percent\')::float'
-                    : metric === 'memory' ? '(elem->>\'memory_mb\')::float'
-                    : '(elem->>\'net_rx_bytes\')::bigint + (elem->>\'net_tx_bytes\')::bigint';
+    // Use float8 for all numeric fields — pg returns bigint as strings, float8 as JS numbers.
+    // COALESCE guards against containers that pre-date the field or have null values.
+    const orderExpr = metric === 'cpu'    ? 'COALESCE((elem->>\'cpu_percent\')::float8, 0)'
+                    : metric === 'memory' ? 'COALESCE((elem->>\'memory_mb\')::float8, 0)'
+                    : 'COALESCE((elem->>\'net_rx_bytes\')::float8, 0) + COALESCE((elem->>\'net_tx_bytes\')::float8, 0)';
 
     const result = await query(
       `WITH latest_docker AS (
@@ -1728,18 +1730,19 @@ export async function getDockerTop(
        SELECT
          s.id   AS server_id,
          s.name AS server_name,
-         elem->>'name'          AS container_name,
-         elem->>'image'         AS image,
-         elem->>'state'         AS state,
-         (elem->>'cpu_percent')::float    AS cpu_percent,
-         (elem->>'memory_mb')::float      AS memory_mb,
-         (elem->>'memory_percent')::float AS memory_percent,
-         (elem->>'net_rx_bytes')::bigint  AS net_rx_bytes,
-         (elem->>'net_tx_bytes')::bigint  AS net_tx_bytes
+         elem->>'name'                                        AS container_name,
+         elem->>'image'                                       AS image,
+         elem->>'state'                                       AS state,
+         COALESCE((elem->>'cpu_percent')::float8,    0)      AS cpu_percent,
+         COALESCE((elem->>'memory_mb')::float8,      0)      AS memory_mb,
+         COALESCE((elem->>'memory_percent')::float8, 0)      AS memory_percent,
+         COALESCE((elem->>'net_rx_bytes')::float8,   0)      AS net_rx_bytes,
+         COALESCE((elem->>'net_tx_bytes')::float8,   0)      AS net_tx_bytes
        FROM latest_docker ld
        JOIN servers s ON s.id = ld.server_id,
-       LATERAL jsonb_array_elements(ld.containers) AS elem
+       LATERAL jsonb_array_elements(COALESCE(ld.containers, '[]'::jsonb)) AS elem
        WHERE (elem->>'state') = 'running'
+         AND elem->>'name' IS NOT NULL
        ORDER BY ${orderExpr} DESC NULLS LAST
        LIMIT $1`,
       [limit]

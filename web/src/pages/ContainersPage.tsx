@@ -61,11 +61,14 @@ export function ContainersPage({ docker, servers, selectedServerId, onSelectServ
       fetchDockerTop('memory',  5),
       fetchDockerTop('network', 5),
     ]).then(([cpu, mem, net]) => {
-      setTopCpu(cpu as ContainerTopEntry[]);
-      setTopMem(mem as ContainerTopEntry[]);
-      setTopNet(net as ContainerTopEntry[]);
+      setTopCpu(Array.isArray(cpu) ? cpu as ContainerTopEntry[] : []);
+      setTopMem(Array.isArray(mem) ? mem as ContainerTopEntry[] : []);
+      setTopNet(Array.isArray(net) ? net as ContainerTopEntry[] : []);
       setTopLoaded(true);
-    }).catch(() => setTopLoaded(true));
+    }).catch(err => {
+      console.error('[ContainersPage] top consumers fetch error:', err);
+      setTopLoaded(true);
+    });
   }, []);
 
   const sorted = useMemo(
@@ -105,35 +108,41 @@ export function ContainersPage({ docker, servers, selectedServerId, onSelectServ
         )}
       </div>
 
-      {/* Top consumers */}
-      {topLoaded && (topCpu.length > 0 || topMem.length > 0 || topNet.length > 0) && (
-        <div>
-          <h2 className="text-[10px] uppercase tracking-widest text-gray-600 mb-3">Top Consumers</h2>
+      {/* Top consumers — always shown after load so empty state is visible */}
+      <div>
+        <h2 className="text-[10px] uppercase tracking-widest text-gray-600 mb-3">Top Consumers</h2>
+        {!topLoaded ? (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            {[0, 1, 2].map(i => (
+              <div key={i} className="card p-4 h-32 animate-pulse bg-gray-800/40" />
+            ))}
+          </div>
+        ) : (
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <TopCard
               title="Top 5 CPU %"
               metric="cpu"
               entries={topCpu}
-              formatValue={e => `${e.cpu_percent.toFixed(1)}%`}
-              colorClass={e => metricTextClass(e.cpu_percent)}
+              formatValue={e => `${Number(e.cpu_percent).toFixed(1)}%`}
+              colorClass={e => metricTextClass(Number(e.cpu_percent))}
             />
             <TopCard
               title="Top 5 Memory MB"
               metric="memory"
               entries={topMem}
-              formatValue={e => `${e.memory_mb.toFixed(0)} MB`}
-              colorClass={e => metricTextClass(e.memory_percent)}
+              formatValue={e => `${Number(e.memory_mb).toFixed(0)} MB`}
+              colorClass={e => metricTextClass(Number(e.memory_percent))}
             />
             <TopCard
               title="Top 5 Network I/O"
               metric="network"
               entries={topNet}
-              formatValue={e => fmtBytesPerSec(e.net_rx_bytes + e.net_tx_bytes)}
+              formatValue={e => fmtBytesPerSec(Number(e.net_rx_bytes) + Number(e.net_tx_bytes))}
               colorClass={() => 'text-cyan-400'}
             />
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Container table */}
       {sorted.length === 0 ? (
