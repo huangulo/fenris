@@ -9,6 +9,7 @@ import (
 
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/disk"
+	"github.com/shirou/gopsutil/v3/host"
 	"github.com/shirou/gopsutil/v3/mem"
 	psnet "github.com/shirou/gopsutil/v3/net"
 )
@@ -56,10 +57,11 @@ type Metric struct {
 }
 
 type AgentPayload struct {
-	ServerName string   `json:"server_name"`
-	HostIP     string   `json:"host_ip,omitempty"`
-	OsType     string   `json:"os_type"`
-	Metrics    []Metric `json:"metrics"`
+	ServerName        string   `json:"server_name"`
+	HostIP            string   `json:"host_ip,omitempty"`
+	OsType            string   `json:"os_type"`
+	HostUptimeSeconds uint64   `json:"host_uptime_seconds,omitempty"`
+	Metrics           []Metric `json:"metrics"`
 }
 
 // ── Collector ─────────────────────────────────────────────────────────────────
@@ -225,6 +227,14 @@ func (c *Collector) CollectNetwork() ([]Metric, error) {
 	c.lastNet = newMap
 	c.lastNetTime = now
 	return metrics, nil
+}
+
+func CollectHostUptime() uint64 {
+	uptime, err := host.Uptime()
+	if err != nil {
+		return 0
+	}
+	return uptime
 }
 
 func (c *Collector) CollectAll() []Metric {
