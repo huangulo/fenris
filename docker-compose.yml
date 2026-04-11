@@ -63,14 +63,16 @@ services:
     networks:
       - fenris
 
+  # ── Optional: built-in agent (monitors the host running the stack) ─────────────
+  # To use: copy agent-local/fenris-agent.yaml.example → agent-local/fenris-agent.yaml
+  # then run: docker compose --profile agent up -d
   agent:
+    profiles: ["agent"]
     build:
       context: ./agent
     environment:
-      # Set HOST_IP to your host's LAN IP when the agent cannot auto-detect it
-      # (e.g. when the host only has Docker bridge interfaces visible).
-      # Example: HOST_IP=192.168.1.42
-      HOST_IP: 100.90.129.230
+      # Set HOST_IP to your host's LAN IP if auto-detection picks the wrong interface.
+      # HOST_IP: 192.168.1.42
     volumes:
       - ./agent-local/fenris-agent.yaml:/app/fenris-agent.yaml:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
