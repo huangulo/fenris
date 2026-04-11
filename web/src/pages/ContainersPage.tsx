@@ -1,7 +1,8 @@
-import React, { useMemo } from 'react';
-import { DockerSnapshot, ServerRow } from '../types';
-import { fmtUptime, truncateImage, metricTextClass } from '../utils';
+import React, { useMemo, useState, useEffect } from 'react';
+import { DockerSnapshot, ServerRow, ContainerTopEntry } from '../types';
+import { fmtBytesPerSec, fmtUptime, truncateImage, metricTextClass } from '../utils';
 import { StateBadge } from '../components/Badges';
+import { fetchDockerTop } from '../api';
 
 interface ContainersPageProps {
   docker: DockerSnapshot;
@@ -10,7 +11,63 @@ interface ContainersPageProps {
   onSelectServer: (id: number | null) => void;
 }
 
+// ── Top consumers card ────────────────────────────────────────────────────────
+
+interface TopCardProps {
+  title: string;
+  metric: 'cpu' | 'memory' | 'network';
+  entries: ContainerTopEntry[];
+  formatValue: (e: ContainerTopEntry) => string;
+  colorClass: (e: ContainerTopEntry) => string;
+}
+
+function TopCard({ title, metric, entries, formatValue, colorClass }: TopCardProps) {
+  return (
+    <div className="card p-4 space-y-3">
+      <div className="text-[10px] uppercase tracking-widest text-gray-600 font-medium">{title}</div>
+      {entries.length === 0 ? (
+        <p className="text-xs text-gray-700 font-mono">No data</p>
+      ) : (
+        <div className="space-y-2">
+          {entries.map((e, i) => (
+            <div key={`${e.server_id}-${e.container_name}`} className="flex items-center gap-2.5">
+              <span className="text-[10px] font-mono text-gray-700 w-4 text-right">{i + 1}</span>
+              <div className="flex-1 min-w-0">
+                <div className="text-xs font-mono text-white truncate">{e.container_name}</div>
+                <div className="text-[10px] font-mono text-gray-600 truncate">{e.server_name}</div>
+              </div>
+              <span className={`text-xs font-mono font-semibold tabular-nums ${colorClass(e)}`}>
+                {formatValue(e)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Main page ─────────────────────────────────────────────────────────────────
+
 export function ContainersPage({ docker, servers, selectedServerId, onSelectServer }: ContainersPageProps) {
+  const [topCpu,    setTopCpu]    = useState<ContainerTopEntry[]>([]);
+  const [topMem,    setTopMem]    = useState<ContainerTopEntry[]>([]);
+  const [topNet,    setTopNet]    = useState<ContainerTopEntry[]>([]);
+  const [topLoaded, setTopLoaded] = useState(false);
+
+  useEffect(() => {
+    Promise.all([
+      fetchDockerTop('cpu',     5),
+      fetchDockerTop('memory',  5),
+      fetchDockerTop('network', 5),
+    ]).then(([cpu, mem, net]) => {
+      setTopCpu(cpu as ContainerTopEntry[]);
+      setTopMem(mem as ContainerTopEntry[]);
+      setTopNet(net as ContainerTopEntry[]);
+      setTopLoaded(true);
+    }).catch(() => setTopLoaded(true));
+  }, []);
+
   const sorted = useMemo(
     () => [...docker.containers].sort((a, b) => {
       const aDown = a.state !== 'running' ? 0 : 1;
@@ -25,7 +82,7 @@ export function ContainersPage({ docker, servers, selectedServerId, onSelectServ
   const unhealthy = sorted.filter(c => c.state !== 'running').length;
 
   return (
-    <div className="p-6 space-y-4 max-w-6xl mx-auto">
+    <div className="p-6 space-y-6 max-w-6xl mx-auto">
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-3">
@@ -48,6 +105,37 @@ export function ContainersPage({ docker, servers, selectedServerId, onSelectServ
         )}
       </div>
 
+      {/* Top consumers */}
+      {topLoaded && (topCpu.length > 0 || topMem.length > 0 || topNet.length > 0) && (
+        <div>
+          <h2 className="text-[10px] uppercase tracking-widest text-gray-600 mb-3">Top Consumers</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <TopCard
+              title="Top 5 CPU %"
+              metric="cpu"
+              entries={topCpu}
+              formatValue={e => `${e.cpu_percent.toFixed(1)}%`}
+              colorClass={e => metricTextClass(e.cpu_percent)}
+            />
+            <TopCard
+              title="Top 5 Memory MB"
+              metric="memory"
+              entries={topMem}
+              formatValue={e => `${e.memory_mb.toFixed(0)} MB`}
+              colorClass={e => metricTextClass(e.memory_percent)}
+            />
+            <TopCard
+              title="Top 5 Network I/O"
+              metric="network"
+              entries={topNet}
+              formatValue={e => fmtBytesPerSec(e.net_rx_bytes + e.net_tx_bytes)}
+              colorClass={() => 'text-cyan-400'}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Container table */}
       {sorted.length === 0 ? (
         <div className="card p-8 flex flex-col items-center gap-3 text-center">
           <div className="w-10 h-10 rounded-full bg-gray-800 flex items-center justify-center">

@@ -40,6 +40,34 @@ export async function apiFetch(path: string, opts: RequestInit = {}): Promise<Re
   return res;
 }
 
+/** GET /api/v1/docker/containers/:server_id/:container_name/history */
+export async function fetchContainerHistory(serverId: number, containerName: string, hours = 24) {
+  const r = await apiFetch(`/api/v1/docker/containers/${serverId}/${encodeURIComponent(containerName)}/history?hours=${hours}`);
+  return r.ok ? r.json() : [];
+}
+
+/** GET /api/v1/docker/containers/:server_id/:container_name/restarts */
+export async function fetchContainerRestarts(serverId: number, containerName: string) {
+  const r = await apiFetch(`/api/v1/docker/containers/${serverId}/${encodeURIComponent(containerName)}/restarts`);
+  return r.ok ? r.json() : { restarts_24h: 0, restarts_7d: 0 };
+}
+
+/** GET /api/v1/docker/events */
+export async function fetchDockerEvents(params: { server_id?: number; container_name?: string; limit?: number } = {}) {
+  const qs = new URLSearchParams();
+  if (params.server_id)      qs.set('server_id',      String(params.server_id));
+  if (params.container_name) qs.set('container_name', params.container_name);
+  if (params.limit)          qs.set('limit',          String(params.limit));
+  const r = await apiFetch(`/api/v1/docker/events?${qs}`);
+  return r.ok ? r.json() : [];
+}
+
+/** GET /api/v1/docker/top */
+export async function fetchDockerTop(metric: 'cpu' | 'memory' | 'network' = 'cpu', limit = 5) {
+  const r = await apiFetch(`/api/v1/docker/top?metric=${metric}&limit=${limit}`);
+  return r.ok ? r.json() : [];
+}
+
 /** POST /api/v1/auth/login — no JWT needed, returns token on success */
 export async function apiLogin(username: string, password: string): Promise<{ token: string; user: { id: number; username: string; role: string } }> {
   const res = await fetch('/api/v1/auth/login', {
