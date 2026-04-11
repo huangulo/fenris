@@ -68,6 +68,108 @@ export async function healthCheck(request: FastifyRequest, reply: FastifyReply):
   return reply.send({ status: 'healthy', timestamp: new Date().toISOString() });
 }
 
+// Per-container cooldown maps (server_id:container_name → last alert ms)
+const flappingCooldowns    = new Map<string, number>();
+const imageChangeCooldowns = new Map<string, number>();
+
+interface PrevContainerInfo {
+  state: string;
+  image_hash?: string;
+  started_at?: string;
+  image?: string;
+}
+
+async function trackContainerEvents(
+  serverId: number,
+  c: ContainerStats,
+  prev: PrevContainerInfo | null,
+): Promise<void> {
+  const ins = (eventType: string, prevState: string | null, newState: string | null, meta: object) =>
+    query(
+      'INSERT INTO container_events (server_id, container_name, event_type, previous_state, new_state, metadata) VALUES ($1, $2, $3, $4, $5, $6::jsonb)',
+      [serverId, c.name, eventType, prevState, newState, JSON.stringify(meta)]
+    );
+
+  if (!prev) {
+    await ins('created', null, c.state, { image: c.image });
+    return;
+  }
+
+  // State changed
+  if (prev.state !== c.state) {
+    await ins('state_change', prev.state, c.state, {});
+  }
+
+  // Restart: started_at moved forward
+  if (c.started_at && prev.started_at && c.started_at !== prev.started_at && c.state === 'running') {
+    await ins('restart', prev.state, c.state, { started_at: c.started_at });
+
+    // Flapping: ≥3 restarts in last 15 min → warning alert with 30-min cooldown
+    const fKey = `${serverId}:${c.name}`;
+    const now  = Date.now();
+    if (now - (flappingCooldowns.get(fKey) ?? 0) > 30 * 60_000) {
+      const result = await query(
+        "SELECT COUNT(*) AS cnt FROM container_events WHERE server_id = $1 AND container_name = $2 AND event_type = 'restart' AND created_at > NOW() - INTERVAL '15 minutes'",
+        [serverId, c.name]
+      );
+      if (parseInt(result.rows[0].cnt, 10) >= 3) {
+        flappingCooldowns.set(fKey, now);
+        const alert: Alert = {
+          id: 0, server_id: serverId, severity: 'warning',
+          message: `Container '${c.name}' is flapping (${result.rows[0].cnt} restarts in 15 min)`,
+          metric_type: 'docker',
+          actual_value: { restarts: parseInt(result.rows[0].cnt, 10) },
+          threshold_value: { max: 3 },
+          acknowledged: false, created_at: new Date(),
+        };
+        const ar = await query(
+          'INSERT INTO alerts (server_id, severity, message, metric_type, actual_value, threshold_value, acknowledged, created_at) VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8) RETURNING id',
+          [alert.server_id, alert.severity, alert.message, alert.metric_type,
+           JSON.stringify(alert.actual_value), JSON.stringify(alert.threshold_value),
+           alert.acknowledged, alert.created_at]
+        );
+        alert.id = ar.rows[0].id;
+        dispatcher.dispatchAlert(alert).catch(() => {});
+        summarizer?.enqueue(alert);
+        attachAlertToIncident(alert.id, alert.server_id, alert.severity, 'docker', alert.message);
+      }
+    }
+  }
+
+  // Image hash changed
+  if (c.image_hash && prev.image_hash && c.image_hash !== prev.image_hash) {
+    await ins('image_change', prev.state, c.state, {
+      old_image: prev.image ?? '', new_image: c.image,
+      old_hash:  prev.image_hash,  new_hash:  c.image_hash,
+    });
+
+    // Info alert with 1-hour cooldown
+    const iKey = `${serverId}:${c.name}:img`;
+    const now  = Date.now();
+    if (now - (imageChangeCooldowns.get(iKey) ?? 0) > 60 * 60_000) {
+      imageChangeCooldowns.set(iKey, now);
+      const oldTag = (prev.image ?? '').split('/').pop() ?? prev.image ?? prev.image_hash.slice(7, 19);
+      const newTag = c.image.split('/').pop() ?? c.image;
+      const alert: Alert = {
+        id: 0, server_id: serverId, severity: 'info',
+        message: `Container '${c.name}' image updated: ${oldTag} → ${newTag}`,
+        metric_type: 'docker',
+        actual_value: {}, threshold_value: {},
+        acknowledged: false, created_at: new Date(),
+      };
+      const ar = await query(
+        'INSERT INTO alerts (server_id, severity, message, metric_type, actual_value, threshold_value, acknowledged, created_at) VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8) RETURNING id',
+        [alert.server_id, alert.severity, alert.message, alert.metric_type,
+         JSON.stringify(alert.actual_value), JSON.stringify(alert.threshold_value),
+         alert.acknowledged, alert.created_at]
+      );
+      alert.id = ar.rows[0].id;
+      dispatcher.dispatchAlert(alert).catch(() => {});
+      summarizer?.enqueue(alert);
+    }
+  }
+}
+
 export async function ingestMetrics(metrics: Metric[]): Promise<{ anomaliesDetected: number }> {
   console.log('Received metrics:', metrics.length, 'records');
 
@@ -84,7 +186,10 @@ export async function ingestMetrics(metrics: Metric[]): Promise<{ anomaliesDetec
     [serverId]
   );
   const prevContainers: ContainerStats[] = prevDockerResult.rows[0]?.containers ?? [];
-  const prevStateMap = new Map(prevContainers.map(c => [c.name, c.state]));
+  type PrevInfo = { state: string; image_hash?: string; started_at?: string; image?: string };
+  const prevStateMap = new Map<string, PrevInfo>(
+    prevContainers.map(c => [c.name, { state: c.state, image_hash: c.image_hash, started_at: c.started_at, image: c.image }])
+  );
 
   for (const metric of metrics) {
     await query(
@@ -101,16 +206,25 @@ export async function ingestMetrics(metrics: Metric[]): Promise<{ anomaliesDetec
 
     if (metric.metric_type === 'docker') {
       const containers = metric.value.docker ?? [];
+      const newNames = new Set(containers.map(c => c.name));
+
       for (const c of containers) {
         // State-transition alert — immediate critical, no Z-score needed
-        const prevState = prevStateMap.get(c.name);
-        if (prevState === 'running' && c.state !== 'running' && !DOCKER_EXCLUDED.has(c.name)) {
+        const prevInfo = prevStateMap.get(c.name);
+        if (prevInfo?.state === 'running' && c.state !== 'running' && !DOCKER_EXCLUDED.has(c.name)) {
           anomalyResults.set(`docker:${c.name}:state`, {
             isAnomaly: true,
             severity: 'critical',
             value: 0,
             message: `Container '${c.name}' stopped (was running, now ${c.state})`
           });
+        }
+
+        // Track container lifecycle events (fire-and-forget)
+        if (!DOCKER_EXCLUDED.has(c.name)) {
+          trackContainerEvents(serverId, c, prevInfo ?? null).catch(
+            err => console.error('[events] container event error:', err)
+          );
         }
 
         // Z-score anomaly on CPU and memory (skip Fenris containers)
@@ -142,6 +256,16 @@ export async function ingestMetrics(metrics: Metric[]): Promise<{ anomaliesDetec
           }
         }
       }
+      // Track containers that disappeared from the snapshot
+      for (const [name, prevInfo] of prevStateMap) {
+        if (!newNames.has(name) && !DOCKER_EXCLUDED.has(name)) {
+          query(
+            'INSERT INTO container_events (server_id, container_name, event_type, previous_state, new_state, metadata) VALUES ($1, $2, $3, $4, $5, $6::jsonb)',
+            [serverId, name, 'removed', prevInfo.state, null, JSON.stringify({})]
+          ).catch(err => console.error('[events] removed event insert error:', err));
+        }
+      }
+
       continue; // skip generic addMetric path
     }
 
@@ -218,6 +342,7 @@ interface AgentPayload {
   server_name: string;
   host_ip?: string;
   os_type?: string;
+  host_uptime_seconds?: number;
   metrics: Omit<Metric, 'id' | 'server_id'>[];
 }
 
@@ -1492,5 +1617,167 @@ export async function splitIncident(
   } catch (err) {
     console.error('[incidents] split error:', err);
     return reply.status(500).send({ error: 'Failed to split incident' });
+  }
+}
+
+// ── Docker container history (time-range, structured) ─────────────────────────
+
+export async function getContainerHistory(
+  request: FastifyRequest<{ Params: { server_id: string; container_name: string } }>,
+  reply: FastifyReply
+): Promise<FastifyReply> {
+  try {
+    const serverId     = parseInt(request.params.server_id);
+    const containerName = decodeURIComponent(request.params.container_name);
+    const hours = Math.min(parseInt((request.query as any).hours || '24'), 168);
+
+    const result = await query(
+      `SELECT
+         m.timestamp,
+         (elem->>'cpu_percent')::float    AS cpu_percent,
+         (elem->>'memory_mb')::float      AS memory_mb,
+         (elem->>'memory_percent')::float AS memory_percent,
+         (elem->>'net_rx_bytes')::bigint  AS network_rx_bytes,
+         (elem->>'net_tx_bytes')::bigint  AS network_tx_bytes
+       FROM metrics m,
+            LATERAL jsonb_array_elements(m.value->'docker') AS elem
+       WHERE m.server_id    = $1
+         AND m.metric_type  = 'docker'
+         AND elem->>'name'  = $2
+         AND m.timestamp   > NOW() - ($3 || ' hours')::INTERVAL
+       ORDER BY m.timestamp ASC`,
+      [serverId, containerName, hours]
+    );
+
+    return reply.send(result.rows);
+  } catch (err) {
+    console.error('[docker] container history error:', err);
+    return reply.status(500).send({ error: 'Failed to fetch container history' });
+  }
+}
+
+// ── Docker events list ────────────────────────────────────────────────────────
+
+export async function listDockerEvents(
+  request: FastifyRequest,
+  reply: FastifyReply
+): Promise<FastifyReply> {
+  try {
+    const serverId      = (request.query as any).server_id;
+    const containerName = (request.query as any).container_name;
+    const limit = Math.min(parseInt((request.query as any).limit || '50'), 200);
+
+    const conditions: string[] = [];
+    const params: any[] = [];
+
+    if (serverId) {
+      params.push(parseInt(serverId));
+      conditions.push(`e.server_id = $${params.length}`);
+    }
+    if (containerName) {
+      params.push(containerName);
+      conditions.push(`e.container_name = $${params.length}`);
+    }
+
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    params.push(limit);
+
+    const result = await query(
+      `SELECT e.*, s.name AS server_name
+       FROM container_events e
+       LEFT JOIN servers s ON s.id = e.server_id
+       ${where}
+       ORDER BY e.created_at DESC
+       LIMIT $${params.length}`,
+      params
+    );
+
+    return reply.send(result.rows);
+  } catch (err) {
+    console.error('[docker] events list error:', err);
+    return reply.status(500).send({ error: 'Failed to fetch container events' });
+  }
+}
+
+// ── Docker top consumers ──────────────────────────────────────────────────────
+
+export async function getDockerTop(
+  request: FastifyRequest,
+  reply: FastifyReply
+): Promise<FastifyReply> {
+  try {
+    const metric = (request.query as any).metric || 'cpu';
+    const limit  = Math.min(parseInt((request.query as any).limit || '10'), 50);
+
+    if (!['cpu', 'memory', 'network'].includes(metric)) {
+      return reply.status(400).send({ error: 'metric must be one of: cpu, memory, network' });
+    }
+
+    const orderExpr = metric === 'cpu'    ? '(elem->>\'cpu_percent\')::float'
+                    : metric === 'memory' ? '(elem->>\'memory_mb\')::float'
+                    : '(elem->>\'net_rx_bytes\')::bigint + (elem->>\'net_tx_bytes\')::bigint';
+
+    const result = await query(
+      `WITH latest_docker AS (
+         SELECT DISTINCT ON (server_id)
+           server_id, value->'docker' AS containers
+         FROM metrics
+         WHERE metric_type = 'docker'
+         ORDER BY server_id, timestamp DESC
+       )
+       SELECT
+         s.id   AS server_id,
+         s.name AS server_name,
+         elem->>'name'          AS container_name,
+         elem->>'image'         AS image,
+         elem->>'state'         AS state,
+         (elem->>'cpu_percent')::float    AS cpu_percent,
+         (elem->>'memory_mb')::float      AS memory_mb,
+         (elem->>'memory_percent')::float AS memory_percent,
+         (elem->>'net_rx_bytes')::bigint  AS net_rx_bytes,
+         (elem->>'net_tx_bytes')::bigint  AS net_tx_bytes
+       FROM latest_docker ld
+       JOIN servers s ON s.id = ld.server_id,
+       LATERAL jsonb_array_elements(ld.containers) AS elem
+       WHERE (elem->>'state') = 'running'
+       ORDER BY ${orderExpr} DESC NULLS LAST
+       LIMIT $1`,
+      [limit]
+    );
+
+    return reply.send(result.rows);
+  } catch (err) {
+    console.error('[docker] top error:', err);
+    return reply.status(500).send({ error: 'Failed to fetch top containers' });
+  }
+}
+
+// ── Docker restart count (last 24h) per container ────────────────────────────
+
+export async function getContainerRestartCount(
+  request: FastifyRequest<{ Params: { server_id: string; container_name: string } }>,
+  reply: FastifyReply
+): Promise<FastifyReply> {
+  try {
+    const serverId      = parseInt(request.params.server_id);
+    const containerName = decodeURIComponent(request.params.container_name);
+
+    const result = await query(
+      `SELECT
+         COUNT(*) FILTER (WHERE event_type = 'restart' AND created_at > NOW() - INTERVAL '24 hours') AS restarts_24h,
+         COUNT(*) FILTER (WHERE event_type = 'restart' AND created_at > NOW() - INTERVAL '7 days')  AS restarts_7d
+       FROM container_events
+       WHERE server_id = $1 AND container_name = $2`,
+      [serverId, containerName]
+    );
+
+    const row = result.rows[0] ?? { restarts_24h: 0, restarts_7d: 0 };
+    return reply.send({
+      restarts_24h: parseInt(row.restarts_24h, 10),
+      restarts_7d:  parseInt(row.restarts_7d,  10),
+    });
+  } catch (err) {
+    console.error('[docker] restart count error:', err);
+    return reply.status(500).send({ error: 'Failed to fetch restart count' });
   }
 }
