@@ -65,7 +65,12 @@ export async function fetchDockerEvents(params: { server_id?: number; container_
 /** GET /api/v1/docker/top */
 export async function fetchDockerTop(metric: 'cpu' | 'memory' | 'network' = 'cpu', limit = 5) {
   const r = await apiFetch(`/api/v1/docker/top?metric=${metric}&limit=${limit}`);
-  return r.ok ? r.json() : [];
+  if (!r.ok) {
+    console.warn(`[fetchDockerTop] ${metric} → HTTP ${r.status}`);
+    return [];
+  }
+  const data = await r.json();
+  return Array.isArray(data) ? data : [];
 }
 
 /** POST /api/v1/auth/login — no JWT needed, returns token on success */
