@@ -46,6 +46,8 @@ export interface ServerRow {
 export interface ContainerStats {
   name: string;
   image: string;
+  image_hash?: string;
+  started_at?: string;
   state: string;
   cpu_percent: number;
   memory_mb: number;
@@ -53,6 +55,41 @@ export interface ContainerStats {
   net_rx_bytes: number;
   net_tx_bytes: number;
   uptime_seconds: number;
+  volumes?: Array<{ name: string; source: string; destination: string; size_bytes: number }>;
+}
+
+export interface ContainerHistoryPoint {
+  timestamp: string;
+  cpu_percent: number;
+  memory_mb: number;
+  memory_percent: number;
+  network_rx_bytes: number;
+  network_tx_bytes: number;
+}
+
+export interface ContainerEvent {
+  id: number;
+  server_id: number;
+  server_name?: string;
+  container_name: string;
+  event_type: 'created' | 'removed' | 'state_change' | 'restart' | 'image_change' | string;
+  previous_state: string | null;
+  new_state: string | null;
+  metadata: Record<string, any> | null;
+  created_at: string;
+}
+
+export interface ContainerTopEntry {
+  server_id: number;
+  server_name: string;
+  container_name: string;
+  image: string;
+  state: string;
+  cpu_percent: number;
+  memory_mb: number;
+  memory_percent: number;
+  net_rx_bytes: number;
+  net_tx_bytes: number;
 }
 
 export interface DockerSnapshot {

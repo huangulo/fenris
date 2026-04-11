@@ -1,13 +1,13 @@
-import React, { useMemo, useState, useEffect } from 'react';
-import { ServerRow, MetricRow, AlertRow, DockerSnapshot, SummaryRow, WazuhSecurityInfo, CrowdSecDecisionRow, CrowdSecStats } from '../types';
+import React, { useMemo, useState, useEffect, useCallback } from 'react';
+import { ServerRow, MetricRow, AlertRow, DockerSnapshot, SummaryRow, WazuhSecurityInfo, CrowdSecDecisionRow, CrowdSecStats, ContainerStats, ContainerHistoryPoint, ContainerEvent } from '../types';
 import {
   isOnline, fmtRelativeTime, metricColor, metricTextClass,
-  fmtBytesPerSec, fmtUptime, truncateImage,
+  fmtBytesPerSec, fmtBytes, fmtUptime, truncateImage,
 } from '../utils';
 import { CircularGauge } from '../components/CircularGauge';
 import { HistoryChart } from '../components/HistoryChart';
 import { StateBadge, OnlineDot } from '../components/Badges';
-import { apiFetch } from '../api';
+import { apiFetch, fetchContainerHistory, fetchContainerRestarts, fetchDockerEvents } from '../api';
 import { useAuth, hasRole } from '../auth';
 
 interface ServerDetailPageProps {
@@ -128,9 +128,212 @@ function NetworkPanel({ rxHistory, txHistory, timestamps, latestRx, latestTx }: 
   );
 }
 
+// ── Container detail panel (inline expansion) ─────────────────────────────────
+
+function eventBadgeColor(type: string) {
+  if (type === 'restart')      return 'text-amber-400 border-amber-800/40 bg-amber-900/10';
+  if (type === 'state_change') return 'text-blue-400 border-blue-800/40 bg-blue-900/10';
+  if (type === 'created')      return 'text-emerald-400 border-emerald-800/40 bg-emerald-900/10';
+  if (type === 'removed')      return 'text-red-400 border-red-800/40 bg-red-900/10';
+  if (type === 'image_change') return 'text-violet-400 border-violet-800/40 bg-violet-900/10';
+  return 'text-gray-400 border-gray-700/40 bg-gray-800/10';
+}
+
+interface ContainerDetailPanelProps {
+  container: ContainerStats;
+  serverId: number;
+  onClose: () => void;
+}
+
+function ContainerDetailPanel({ container, serverId, onClose }: ContainerDetailPanelProps) {
+  const [history, setHistory]   = useState<ContainerHistoryPoint[]>([]);
+  const [events,  setEvents]    = useState<ContainerEvent[]>([]);
+  const [restarts, setRestarts] = useState<{ restarts_24h: number; restarts_7d: number } | null>(null);
+  const [loading, setLoading]   = useState(true);
+
+  useEffect(() => {
+    setLoading(true);
+    Promise.all([
+      fetchContainerHistory(serverId, container.name, 24),
+      fetchDockerEvents({ server_id: serverId, container_name: container.name, limit: 20 }),
+      fetchContainerRestarts(serverId, container.name),
+    ]).then(([h, e, r]) => {
+      setHistory(h as ContainerHistoryPoint[]);
+      setEvents(e as ContainerEvent[]);
+      setRestarts(r as { restarts_24h: number; restarts_7d: number });
+      setLoading(false);
+    }).catch(() => setLoading(false));
+  }, [serverId, container.name]);
+
+  // Derive rate data from cumulative network bytes
+  const netRxRates = useMemo(() => {
+    return history.map((pt, i) => {
+      if (i === 0) return 0;
+      const prev = history[i - 1];
+      const dtSec = (new Date(pt.timestamp).getTime() - new Date(prev.timestamp).getTime()) / 1000;
+      if (dtSec <= 0) return 0;
+      return Math.max(0, (pt.network_rx_bytes - prev.network_rx_bytes) / dtSec);
+    });
+  }, [history]);
+
+  const netTxRates = useMemo(() => {
+    return history.map((pt, i) => {
+      if (i === 0) return 0;
+      const prev = history[i - 1];
+      const dtSec = (new Date(pt.timestamp).getTime() - new Date(prev.timestamp).getTime()) / 1000;
+      if (dtSec <= 0) return 0;
+      return Math.max(0, (pt.network_tx_bytes - prev.network_tx_bytes) / dtSec);
+    });
+  }, [history]);
+
+  const timestamps = history.map(h => h.timestamp);
+
+  return (
+    <tr>
+      <td colSpan={7} className="px-0 pb-0">
+        <div className="border-t border-gray-800/60 bg-gray-900/40 p-5 space-y-5">
+          {/* Header row */}
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-sm font-semibold text-white">{container.name}</span>
+                <StateBadge state={container.state} />
+                {restarts && restarts.restarts_24h > 0 && (
+                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded border text-amber-400 border-amber-800/40 bg-amber-900/10">
+                    {restarts.restarts_24h} restart{restarts.restarts_24h !== 1 ? 's' : ''} / 24h
+                  </span>
+                )}
+              </div>
+              <div className="text-[10px] font-mono text-gray-500">{container.image}</div>
+              {container.image_hash && (
+                <div className="text-[10px] font-mono text-gray-700">
+                  {container.image_hash.replace('sha256:', '').slice(0, 12)}
+                </div>
+              )}
+            </div>
+            <button onClick={onClose}
+              className="text-gray-600 hover:text-gray-400 transition-colors text-xs font-mono border border-gray-700/40 rounded px-2 py-0.5">
+              ✕ close
+            </button>
+          </div>
+
+          {/* Stats row */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {[
+              { label: 'CPU',   value: `${container.cpu_percent.toFixed(1)}%`,  color: metricTextClass(container.cpu_percent) },
+              { label: 'Memory', value: `${container.memory_mb.toFixed(0)} MB`, color: metricTextClass(container.memory_percent) },
+              { label: 'Mem %',  value: `${container.memory_percent.toFixed(1)}%`, color: metricTextClass(container.memory_percent) },
+              { label: 'Uptime', value: fmtUptime(container.uptime_seconds), color: 'text-gray-300' },
+            ].map(s => (
+              <div key={s.label} className="text-center card-sm p-2">
+                <div className={`text-base font-mono font-bold tabular-nums ${s.color}`}>{s.value}</div>
+                <div className="text-[10px] text-gray-600 uppercase tracking-widest">{s.label}</div>
+              </div>
+            ))}
+          </div>
+
+          {loading ? (
+            <div className="h-32 bg-gray-800/40 rounded-lg animate-pulse" />
+          ) : history.length < 2 ? (
+            <p className="text-xs text-gray-600 font-mono">No history data yet — data accumulates over time.</p>
+          ) : (
+            <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
+              <div>
+                <div className="text-[10px] text-gray-600 uppercase tracking-widest mb-1.5">CPU %</div>
+                <HistoryChart
+                  values={history.map(h => h.cpu_percent)}
+                  timestamps={timestamps}
+                  color={metricColor(container.cpu_percent)}
+                  height={72}
+                  formatTooltip={v => `${v.toFixed(1)}%`}
+                />
+              </div>
+              <div>
+                <div className="text-[10px] text-gray-600 uppercase tracking-widest mb-1.5">Memory MB</div>
+                <HistoryChart
+                  values={history.map(h => h.memory_mb)}
+                  timestamps={timestamps}
+                  color={metricColor(container.memory_percent)}
+                  height={72}
+                  formatTooltip={v => `${v.toFixed(0)} MB`}
+                />
+              </div>
+              <div>
+                <div className="text-[10px] text-gray-600 uppercase tracking-widest mb-1.5">Net RX/s</div>
+                <HistoryChart
+                  values={netRxRates}
+                  timestamps={timestamps}
+                  color="#06b6d4"
+                  height={72}
+                  formatTooltip={v => `↓ ${fmtBytesPerSec(v)}`}
+                />
+              </div>
+              <div>
+                <div className="text-[10px] text-gray-600 uppercase tracking-widest mb-1.5">Net TX/s</div>
+                <HistoryChart
+                  values={netTxRates}
+                  timestamps={timestamps}
+                  color="#a78bfa"
+                  height={72}
+                  formatTooltip={v => `↑ ${fmtBytesPerSec(v)}`}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Volumes */}
+          {container.volumes && container.volumes.length > 0 && (
+            <div>
+              <div className="text-[10px] text-gray-600 uppercase tracking-widest mb-2">Volumes</div>
+              <div className="space-y-1">
+                {container.volumes.map((v, i) => (
+                  <div key={i} className="flex items-center justify-between text-xs font-mono gap-4">
+                    <span className="text-gray-500 truncate max-w-[16rem]">{v.destination}</span>
+                    <span className="text-gray-600 truncate max-w-[10rem] hidden sm:block">{v.source.split('/').slice(-2).join('/')}</span>
+                    {v.size_bytes > 0 && (
+                      <span className={v.size_bytes > 10 * 1024 * 1024 * 1024 ? 'text-amber-400' : 'text-gray-400'}>
+                        {fmtBytes(v.size_bytes)}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Recent events */}
+          {events.length > 0 && (
+            <div>
+              <div className="text-[10px] text-gray-600 uppercase tracking-widest mb-2">Recent Events</div>
+              <div className="space-y-1.5">
+                {events.slice(0, 10).map(ev => (
+                  <div key={ev.id} className="flex items-center gap-2.5 text-xs font-mono">
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded border ${eventBadgeColor(ev.event_type)}`}>
+                      {ev.event_type.replace('_', ' ')}
+                    </span>
+                    {ev.previous_state && ev.new_state && (
+                      <span className="text-gray-600">{ev.previous_state} → {ev.new_state}</span>
+                    )}
+                    {ev.event_type === 'image_change' && ev.metadata?.new_image && (
+                      <span className="text-gray-500 truncate max-w-[14rem]">{String(ev.metadata.new_image).split('/').pop()}</span>
+                    )}
+                    <span className="text-gray-700 ml-auto">{fmtRelativeTime(ev.created_at)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </td>
+    </tr>
+  );
+}
+
 // ── Container table ───────────────────────────────────────────────────────────
 
-function ContainerTable({ containers }: { containers: DockerSnapshot['containers'] }) {
+function ContainerTable({ containers, serverId }: { containers: DockerSnapshot['containers']; serverId: number }) {
+  const [expanded, setExpanded] = useState<string | null>(null);
+
   const sorted = useMemo(
     () => [...containers].sort((a, b) => {
       const aDown = a.state !== 'running' ? 0 : 1;
@@ -140,6 +343,9 @@ function ContainerTable({ containers }: { containers: DockerSnapshot['containers
     }),
     [containers],
   );
+
+  const toggle = useCallback((name: string) =>
+    setExpanded(prev => prev === name ? null : name), []);
 
   if (sorted.length === 0) {
     return (
@@ -165,25 +371,45 @@ function ContainerTable({ containers }: { containers: DockerSnapshot['containers
         </thead>
         <tbody>
           {sorted.map(c => (
-            <tr key={c.name} className="border-b border-gray-800/50 last:border-0 hover:bg-gray-800/25 transition-colors">
-              <td className="px-4 py-3 text-white font-semibold">{c.name}</td>
-              <td className="px-4 py-3 text-gray-500 max-w-[12rem] truncate hidden md:table-cell">
-                {truncateImage(c.image)}
-              </td>
-              <td className="px-4 py-3"><StateBadge state={c.state} /></td>
-              <td className={`px-4 py-3 text-right tabular-nums ${metricTextClass(c.cpu_percent)}`}>
-                {c.cpu_percent.toFixed(1)}
-              </td>
-              <td className="px-4 py-3 text-right tabular-nums text-gray-300">
-                {c.memory_mb.toFixed(0)}
-              </td>
-              <td className={`px-4 py-3 text-right tabular-nums hidden sm:table-cell ${metricTextClass(c.memory_percent)}`}>
-                {c.memory_percent.toFixed(1)}
-              </td>
-              <td className="px-4 py-3 text-right text-gray-600 hidden lg:table-cell">
-                {fmtUptime(c.uptime_seconds)}
-              </td>
-            </tr>
+            <React.Fragment key={c.name}>
+              <tr
+                onClick={() => toggle(c.name)}
+                className={`border-b border-gray-800/50 last:border-0 hover:bg-gray-800/25 transition-colors cursor-pointer select-none ${expanded === c.name ? 'bg-gray-800/30' : ''}`}
+              >
+                <td className="px-4 py-3 text-white font-semibold flex items-center gap-1.5">
+                  <svg
+                    width="10" height="10" viewBox="0 0 10 10" className={`text-gray-600 flex-shrink-0 transition-transform ${expanded === c.name ? 'rotate-90' : ''}`}
+                    fill="none" stroke="currentColor" strokeWidth="1.5"
+                  >
+                    <polyline points="3 2 7 5 3 8"/>
+                  </svg>
+                  {c.name}
+                </td>
+                <td className="px-4 py-3 text-gray-500 max-w-[12rem] truncate hidden md:table-cell">
+                  {truncateImage(c.image)}
+                </td>
+                <td className="px-4 py-3"><StateBadge state={c.state} /></td>
+                <td className={`px-4 py-3 text-right tabular-nums ${metricTextClass(c.cpu_percent)}`}>
+                  {c.cpu_percent.toFixed(1)}
+                </td>
+                <td className="px-4 py-3 text-right tabular-nums text-gray-300">
+                  {c.memory_mb.toFixed(0)}
+                </td>
+                <td className={`px-4 py-3 text-right tabular-nums hidden sm:table-cell ${metricTextClass(c.memory_percent)}`}>
+                  {c.memory_percent.toFixed(1)}
+                </td>
+                <td className="px-4 py-3 text-right text-gray-600 hidden lg:table-cell">
+                  {fmtUptime(c.uptime_seconds)}
+                </td>
+              </tr>
+              {expanded === c.name && (
+                <ContainerDetailPanel
+                  container={c}
+                  serverId={serverId}
+                  onClose={() => setExpanded(null)}
+                />
+              )}
+            </React.Fragment>
           ))}
         </tbody>
       </table>
@@ -676,7 +902,7 @@ export function ServerDetailPage({
             </>
           )}
         </div>
-        <ContainerTable containers={docker.containers} />
+        <ContainerTable containers={docker.containers} serverId={server.id} />
       </div>
 
     </div>
