@@ -83,10 +83,11 @@ func (ws *windowsService) collect(collector *Collector, poster *Poster, hostIP s
 		return
 	}
 	payload := AgentPayload{
-		ServerName: ws.cfg.ServerName,
-		HostIP:     hostIP,
-		OsType:     "windows",
-		Metrics:    metrics,
+		ServerName:        ws.cfg.ServerName,
+		HostIP:            hostIP,
+		OsType:            "windows",
+		HostUptimeSeconds: CollectHostUptime(),
+		Metrics:           metrics,
 	}
 	poster.Send(payload)
 }

@@ -120,10 +120,11 @@ func runForeground(cfg Config) {
 		metrics := collector.CollectAll()
 		if len(metrics) > 0 {
 			payload := AgentPayload{
-				ServerName: cfg.ServerName,
-				HostIP:     hostIP,
-				OsType:     "windows",
-				Metrics:    metrics,
+				ServerName:        cfg.ServerName,
+				HostIP:            hostIP,
+				OsType:            "windows",
+				HostUptimeSeconds: CollectHostUptime(),
+				Metrics:           metrics,
 			}
 			poster.Send(payload)
 		}
