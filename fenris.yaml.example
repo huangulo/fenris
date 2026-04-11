@@ -6,6 +6,8 @@
 server:
   port: 3200
   database_url: postgresql://fenris:CHANGE_ME_BEFORE_DEPLOY@postgres:5432/fenris
+  # API key agents use to authenticate metric pushes (must match FENRIS_API_KEY in .env)
+  api_key: "CHANGE_ME_BEFORE_DEPLOY"
 
 # Metrics Collection
 monitors:
@@ -133,11 +135,11 @@ wazuh:
 crowdsec:
   enabled: false
   instances:
-    - name: "Racknerd Dallas"         # must match a Fenris server name
-      url: "http://100.90.129.230:8080"
+    - name: "web-01"                  # must match a Fenris server name
+      url: "http://192.168.1.10:8080"
       api_key: "YOUR_LAPI_KEY"
-    - name: "Racknerd Pangolin"
-      url: "http://100.90.129.100:8080"
+    - name: "web-02"
+      url: "http://192.168.1.11:8080"
       api_key: "YOUR_LAPI_KEY"
   poll_interval: "60s"
 
