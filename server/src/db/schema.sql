@@ -295,3 +295,19 @@ CREATE TABLE IF NOT EXISTS support_ticket_notes (
 );
 
 CREATE INDEX IF NOT EXISTS idx_support_ticket_notes_ticket_id ON support_ticket_notes(ticket_id);
+
+-- ── Container Events ──────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS container_events (
+  id               SERIAL PRIMARY KEY,
+  server_id        INTEGER REFERENCES servers(id) ON DELETE CASCADE,
+  container_name   VARCHAR(255) NOT NULL,
+  event_type       VARCHAR(50)  NOT NULL,
+  previous_state   VARCHAR(50),
+  new_state        VARCHAR(50),
+  metadata         JSONB,
+  created_at       TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_container_events_server_id ON container_events(server_id);
+CREATE INDEX IF NOT EXISTS idx_container_events_container ON container_events(server_id, container_name, created_at DESC);
