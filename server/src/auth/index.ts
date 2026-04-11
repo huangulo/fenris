@@ -144,16 +144,20 @@ export async function ensureDefaultAdmin(): Promise<void> {
       [hash]
     );
 
-    // Print clearly — never again
+    // Print clearly — this is shown exactly once
     console.log('');
-    console.log('╔══════════════════════════════════════════════════════╗');
-    console.log('║          FENRIS DEFAULT ADMIN — SAVE THIS            ║');
-    console.log('║                                                      ║');
-    console.log(`║   Username: admin                                    ║`);
-    console.log(`║   Password: ${password}                    ║`);
-    console.log('║                                                      ║');
-    console.log('║   Change it immediately via Settings → Account.      ║');
-    console.log('╚══════════════════════════════════════════════════════╝');
+    console.log('╔══════════════════════════════════════════════════════════╗');
+    console.log('║        FENRIS — FIRST RUN: SAVE YOUR ADMIN PASSWORD      ║');
+    console.log('╠══════════════════════════════════════════════════════════╣');
+    console.log('║                                                          ║');
+    console.log(`║   Username : admin                                       ║`);
+    console.log(`║   Password : ${password}                          ║`);
+    console.log('║                                                          ║');
+    console.log('║   This password will NOT be shown again.                 ║');
+    console.log('║   Change it via Settings → Account after logging in.     ║');
+    console.log('║                                                          ║');
+    console.log('║   Dashboard: http://localhost:8081                       ║');
+    console.log('╚══════════════════════════════════════════════════════════╝');
     console.log('');
   } catch (err) {
     console.error('[auth] failed to create default admin:', err);
