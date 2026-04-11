@@ -1,5 +1,6 @@
 import fetch from 'node-fetch';
 import si from 'systeminformation';
+import os from 'os';
 import { loadConfig } from './config.js';
 import { SystemCollector } from './collectors/system.js';
 import { DockerCollector } from './collectors/docker.js';
@@ -102,7 +103,7 @@ async function collect(
   const dockerMetric = await dockerCollector.collectAll();
   if (dockerMetric) metrics.push(dockerMetric);
 
-  return { server_name: serverName, host_ip: hostIP, os_type: 'linux', metrics };
+  return { server_name: serverName, host_ip: hostIP, os_type: 'linux', host_uptime_seconds: os.uptime(), metrics };
 }
 
 async function run(): Promise<void> {
@@ -114,7 +115,7 @@ async function run(): Promise<void> {
   const dockerCollector = new DockerCollector();
 
   if (config.docker_enabled) {
-    await dockerCollector.init();
+    await dockerCollector.init(config.collect_volume_sizes, config.volume_size_interval);
   }
 
   const hostIP = await getHostIP();
