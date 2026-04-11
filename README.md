@@ -13,15 +13,20 @@ Fenris is a self-hosted, three-tier monitoring stack: lightweight per-host agent
 ## Features
 
 - **Agent-based collection** — deploy one small agent per host; zero polling from the server
+- **Windows + Linux agents** — PowerShell installer for Windows (runs as a Windows Service); curl one-liner for Linux
 - **Z-score anomaly detection** — statistical baseline per metric, fires only on genuine spikes
 - **Predictive alerting** — linear regression projects disk/CPU/memory exhaustion days in advance
 - **Docker container monitoring** — per-container CPU, memory, network, state-transition alerts
 - **Multi-channel alerts** — Discord, Slack, and Email; per-severity routing, 15-minute cooldown
 - **Alert channel testing** — `POST /api/v1/test-alert` + Settings UI button to verify webhooks
 - **AI incident summaries** — optional OpenAI integration batches and explains alert clusters
+- **Incidents workflow** — create, track, and resolve incidents linked to alerts
+- **Support ticket tracking** — built-in ticket list, detail modal, and reports/stats tab
+- **Multi-user auth with RBAC** — local accounts with role-based access control (admin / read-only)
+- **Wazuh agent monitoring** — pulls agent status and security alerts from the Wazuh Manager REST API
+- **CrowdSec integration** — displays active IP bans and decisions from the CrowdSec Local API
 - **Dark React dashboard** — server cards with sparklines, circular gauges, 1-hour history charts
 - **Data retention** — configurable per-metric and per-alert TTL, hourly background cleanup
-- **One-line agent install** — curl installer handles sparse clone, Docker GID, and Compose setup
 
 ---
 
@@ -121,6 +126,43 @@ EOF
 
 docker compose -f /opt/fenris-agent/docker-compose.yml up -d
 ```
+
+### Windows Agent
+
+> **Requires PowerShell running as Administrator.**
+
+The PowerShell installer downloads the agent, registers it as a Windows Service, and writes a default config file.
+
+**Step 1 — allow script execution for this session (if needed):**
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+```
+
+**Step 2 — download and run the installer:**
+
+```powershell
+iwr https://raw.githubusercontent.com/huangulo/fenris/main/install-agent.ps1 -OutFile install-agent.ps1 -UseBasicParsing; .\install-agent.ps1
+```
+
+> **Antivirus note:** Bitdefender and other AV products may flag the `iex` (Invoke-Expression) pattern used in piped installs. The download-then-run approach above (`-OutFile` first, then `.\install-agent.ps1`) avoids this and lets you inspect the script before executing it.
+
+The installer will prompt for your Fenris server URL, API key, and a server name, then register the `FenrisAgent` Windows Service set to start automatically.
+
+**Service management:**
+
+```powershell
+Start-Service FenrisAgent    # start the agent
+Stop-Service FenrisAgent     # stop the agent
+Restart-Service FenrisAgent  # restart after config changes
+Get-Service FenrisAgent      # check status
+```
+
+**Config file location:** `C:\ProgramData\Fenris\fenris-agent.yaml`
+
+The config schema is identical to the Linux agent — edit it and restart the service to apply changes.
+
+---
 
 ### Agent configuration (`fenris-agent.yaml`)
 
