@@ -1,6 +1,8 @@
 export interface ContainerStats {
   name: string;
   image: string;
+  image_hash?: string;
+  started_at?: string;
   state: 'running' | 'stopped' | 'restarting' | 'paused' | 'exited' | 'dead';
   cpu_percent: number;
   memory_mb: number;
@@ -8,6 +10,7 @@ export interface ContainerStats {
   net_rx_bytes: number;
   net_tx_bytes: number;
   uptime_seconds: number;
+  volumes?: Array<{ name: string; source: string; destination: string; size_bytes: number }>;
 }
 
 export interface Metric {
@@ -26,5 +29,6 @@ export interface AgentPayload {
   server_name: string;
   host_ip?: string;
   os_type?: string;
+  host_uptime_seconds?: number;
   metrics: Metric[];
 }

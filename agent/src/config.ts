@@ -9,6 +9,8 @@ export interface AgentConfig {
   collect_interval: number; // ms
   docker_enabled: boolean;
   disk_paths: string[];
+  collect_volume_sizes: boolean;
+  volume_size_interval: number; // ms, how often to re-measure volume sizes
 }
 
 function parseInterval(raw: string | number | undefined, defaultSec: number): number {
@@ -50,5 +52,7 @@ export function loadConfig(): AgentConfig {
                         ? Boolean(raw.docker_enabled)
                         : process.env.FENRIS_DOCKER_ENABLED !== 'false',
     disk_paths:       diskPaths,
+    collect_volume_sizes: Boolean(raw.collect_volume_sizes ?? false),
+    volume_size_interval: parseInterval(raw.volume_size_interval as string | number | undefined, 300), // 5 min default
   };
 }
