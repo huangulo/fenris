@@ -7,7 +7,7 @@ import { Alert } from '../types.js';
  * itself resets the anomaly detector history anyway.
  */
 const lastSent = new Map<string, number>();
-const COOLDOWN_MS = 15 * 60 * 1000; // 15 minutes per (server, metric_type)
+const COOLDOWN_MS = 60 * 60 * 1000; // 60 minutes per (server, metric_type)
 
 /**
  * Returns true if this alert should fire on the given channel:
