@@ -221,6 +221,42 @@ function buildAuthHook() {
   };
 }
 
+// ── Startup cleanup ───────────────────────────────────────────────────────────
+
+/**
+ * One-time cleanup on every server start:
+ * 1. Bulk-acknowledge all alerts older than 24 h that are still unacknowledged.
+ * 2. Auto-resolve incidents in 'new' or 'investigating' state where started_at
+ *    is older than 24 h AND no new alerts arrived in the last hour.
+ */
+async function startupCleanup(): Promise<void> {
+  try {
+    const alerts = await query(
+      `UPDATE alerts
+       SET acknowledged = true
+       WHERE acknowledged = false
+         AND created_at < NOW() - INTERVAL '24 hours'`
+    );
+    console.log(`[cleanup] acknowledged ${alerts.rowCount} stale alerts (>24h old)`);
+
+    const incidents = await query(
+      `UPDATE incidents
+       SET state = 'resolved', resolved_at = NOW(), updated_at = NOW()
+       WHERE state IN ('new', 'investigating')
+         AND started_at < NOW() - INTERVAL '24 hours'
+         AND id NOT IN (
+           SELECT DISTINCT incident_id
+           FROM alerts
+           WHERE incident_id IS NOT NULL
+             AND created_at > NOW() - INTERVAL '1 hour'
+         )`
+    );
+    console.log(`[cleanup] resolved ${incidents.rowCount} stale incidents (>24h, no recent alerts)`);
+  } catch (err) {
+    console.warn('[cleanup] startup cleanup failed (non-fatal):', err);
+  }
+}
+
 // ── Startup ───────────────────────────────────────────────────────────────────
 
 async function start(): Promise<void> {
@@ -237,6 +273,9 @@ async function start(): Promise<void> {
 
     // One-time incident backfill
     backfillIncidents().catch(err => console.error('[incidents] backfill startup error:', err));
+
+    // Startup cleanup: acknowledge stale alerts and resolve stale incidents
+    startupCleanup().catch(err => console.error('[cleanup] startup cleanup error:', err));
 
     initServices(config);
 
