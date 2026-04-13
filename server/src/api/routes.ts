@@ -12,12 +12,32 @@ import { Metric, Alert, ContainerStats, Config } from '../types.js';
 function getFloors(cfg: Config) {
   const f = cfg.anomaly_detection.floors;
   return {
-    cpu:           f?.cpu           ?? 50,
-    memory:        f?.memory        ?? 60,
-    disk:          f?.disk          ?? 70,
-    docker_cpu:    f?.docker_cpu    ?? 30,
-    docker_memory: f?.docker_memory ?? 40,
+    cpu:           f?.cpu           ?? 80,
+    memory:        f?.memory        ?? 85,
+    disk:          f?.disk          ?? 80,
+    docker_cpu:    f?.docker_cpu    ?? 75,
+    docker_memory: f?.docker_memory ?? 70,
   };
+}
+
+/**
+ * Returns true if the container name matches any of the configured exclude patterns.
+ * Patterns are simple globs: '*' matches any sequence of characters.
+ * The built-in Fenris containers are always excluded.
+ */
+function isExcludedContainer(name: string, cfg: Config): boolean {
+  // Always exclude Fenris's own stack (self-referential noise)
+  if (name === 'fenris-server' || name === 'fenris-web' || name === 'fenris-postgres') return true;
+  const patterns = cfg.anomaly_detection.exclude_containers ?? [
+    '*-agent*', '*-exporter', '*-cron*', 'watchtower',
+  ];
+  return patterns.some(p => globMatch(p, name));
+}
+
+/** Minimal glob match: only supports '*' as a wildcard. */
+function globMatch(pattern: string, str: string): boolean {
+  const re = new RegExp('^' + pattern.split('*').map(s => s.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*') + '$');
+  return re.test(str);
 }
 
 // Global instances
@@ -27,9 +47,6 @@ let summarizer: Summarizer | null = null;
 let uptimeMonitor: UptimeMonitor | null = null;
 let wazuhMonitor:  WazuhMonitor  | null = null;
 let config: Config;
-
-// Fenris containers excluded from anomaly detection (self-referential noise)
-const DOCKER_EXCLUDED = new Set(['fenris-server', 'fenris-web', 'fenris-postgres']);
 
 export function initServices(cfg: Config): void {
   config = cfg;
@@ -211,7 +228,7 @@ export async function ingestMetrics(metrics: Metric[]): Promise<{ anomaliesDetec
       for (const c of containers) {
         // State-transition alert — immediate critical, no Z-score needed
         const prevInfo = prevStateMap.get(c.name);
-        if (prevInfo?.state === 'running' && c.state !== 'running' && !DOCKER_EXCLUDED.has(c.name)) {
+        if (prevInfo?.state === 'running' && c.state !== 'running' && !isExcludedContainer(c.name, config)) {
           anomalyResults.set(`docker:${c.name}:state`, {
             isAnomaly: true,
             severity: 'critical',
@@ -221,14 +238,14 @@ export async function ingestMetrics(metrics: Metric[]): Promise<{ anomaliesDetec
         }
 
         // Track container lifecycle events (fire-and-forget)
-        if (!DOCKER_EXCLUDED.has(c.name)) {
+        if (!isExcludedContainer(c.name, config)) {
           trackContainerEvents(serverId, c, prevInfo ?? null).catch(
             err => console.error('[events] container event error:', err)
           );
         }
 
         // Z-score anomaly on CPU and memory (skip Fenris containers)
-        if (!DOCKER_EXCLUDED.has(c.name)) {
+        if (!isExcludedContainer(c.name, config)) {
           const floors = getFloors(config);
 
           const cpuKey = key(`docker:${c.name}:cpu`);

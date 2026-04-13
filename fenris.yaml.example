@@ -102,6 +102,14 @@ anomaly_detection:
     disk:          80   # ignore disk anomalies at or below 80%
     docker_cpu:    75   # ignore container CPU anomalies at or below 75%
     docker_memory: 70   # ignore container memory anomalies at or below 70%
+  # Glob patterns for containers to skip anomaly detection entirely.
+  # Agents, exporters, and cron containers spike by design.
+  # Network metrics are always excluded regardless of this list.
+  exclude_containers:
+    - "*-agent*"
+    - "*-exporter"
+    - "*-cron*"
+    - "watchtower"
 
 # AI Incident Summaries
 # Uses the OpenAI API (or any OpenAI-compatible endpoint).
