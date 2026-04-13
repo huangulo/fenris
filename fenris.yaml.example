@@ -89,7 +89,7 @@ alerts:
 anomaly_detection:
   enabled: true
   algorithm: zscore
-  zscore_threshold: 3.5
+  zscore_threshold: 4.0
   window_size: 100
   min_samples: 60
   # Minimum absolute value floors — Z-score detection is skipped entirely
