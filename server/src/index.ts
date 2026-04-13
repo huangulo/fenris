@@ -103,9 +103,9 @@ async function loadConfig(): Promise<Config> {
       },
       predictions: {
         enabled: true, interval: '5m',
-        disk_horizon_days: 7, cpu_horizon_hours: 1, memory_horizon_hours: 1,
+        disk_horizon_days: 3, cpu_horizon_hours: 1, memory_horizon_hours: 1,
         disk_threshold: 85, cpu_threshold: 90, memory_threshold: 90,
-        min_samples: 120, min_confidence: 0.5,
+        min_samples: 120, min_confidence: 0.75,
       },
       ai: {
         enabled: false, provider: 'openai',
@@ -387,14 +387,14 @@ async function start(): Promise<void> {
       predictor = new Predictor({
         enabled:              predCfg.enabled ?? true,
         interval_ms:          parseDurationMs(predCfg.interval ?? '5m', 5 * 60_000),
-        disk_horizon_days:    predCfg.disk_horizon_days    ?? 7,
+        disk_horizon_days:    predCfg.disk_horizon_days    ?? 3,
         cpu_horizon_hours:    predCfg.cpu_horizon_hours    ?? 1,
         memory_horizon_hours: predCfg.memory_horizon_hours ?? 1,
         disk_threshold:       predCfg.disk_threshold       ?? 85,
         cpu_threshold:        predCfg.cpu_threshold        ?? 90,
         memory_threshold:     predCfg.memory_threshold     ?? 90,
         min_samples:          predCfg.min_samples          ?? 120,
-        min_confidence:       predCfg.min_confidence       ?? 0.5,
+        min_confidence:       predCfg.min_confidence       ?? 0.75,
       }, getDispatcher());
       predictor.start();
     }
