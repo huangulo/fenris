@@ -1637,6 +1637,107 @@ export async function splitIncident(
   }
 }
 
+// ── Bulk resolve incidents ─────────────────────────────────────────────────────
+
+export async function bulkResolveIncidents(
+  request: FastifyRequest<{ Body: { scope: string; hours?: number } }>,
+  reply: FastifyReply
+): Promise<FastifyReply> {
+  // Admin-only
+  const user = (request as any).user;
+  if (!user || user.role !== 'admin') {
+    return reply.status(403).send({ error: 'admin role required' });
+  }
+
+  const { scope, hours } = request.body ?? {};
+  if (!scope || !['all', 'resolved_only', 'older_than_hours'].includes(scope)) {
+    return reply.status(400).send({ error: 'scope must be one of: all, resolved_only, older_than_hours' });
+  }
+  if (scope === 'older_than_hours' && (typeof hours !== 'number' || hours <= 0)) {
+    return reply.status(400).send({ error: 'hours must be a positive number when scope is older_than_hours' });
+  }
+
+  try {
+    let incidentWhere: string;
+    if (scope === 'resolved_only') {
+      incidentWhere = `state = 'resolved'`;
+    } else if (scope === 'older_than_hours') {
+      incidentWhere = `state IN ('new', 'investigating') AND started_at < NOW() - INTERVAL '${Math.floor(hours!)} hours'`;
+    } else {
+      // 'all' — everything not already resolved
+      incidentWhere = `state IN ('new', 'investigating')`;
+    }
+
+    // Acknowledge underlying alerts
+    await query(
+      `UPDATE alerts SET acknowledged = TRUE
+       WHERE acknowledged = FALSE
+         AND incident_id IN (SELECT id FROM incidents WHERE ${incidentWhere})`
+    );
+
+    // Resolve the incidents
+    const result = await query(
+      `UPDATE incidents
+       SET state = 'resolved', resolved_at = NOW(), updated_at = NOW()
+       WHERE ${incidentWhere}
+       RETURNING id`
+    );
+    const count = result.rowCount ?? 0;
+
+    // Audit log
+    const { writeAuditLog } = await import('../auth/index.js');
+    await writeAuditLog(
+      user.id, user.username,
+      'incidents.bulk_resolve',
+      'incidents', undefined,
+      { scope, hours: hours ?? null, resolved_count: count },
+    );
+
+    console.log(`[incidents] bulk-resolve scope=${scope} resolved=${count} by ${user.username}`);
+    return reply.send({ resolved: count, scope });
+  } catch (err) {
+    console.error('[incidents] bulk-resolve error:', err);
+    return reply.status(500).send({ error: 'Failed to bulk resolve incidents' });
+  }
+}
+
+/**
+ * Count how many incidents would be affected by a given bulk-resolve scope.
+ * Used by the frontend confirmation modal.
+ */
+export async function countBulkResolve(
+  request: FastifyRequest<{ Querystring: { scope: string; hours?: string } }>,
+  reply: FastifyReply
+): Promise<FastifyReply> {
+  const user = (request as any).user;
+  if (!user || user.role !== 'admin') {
+    return reply.status(403).send({ error: 'admin role required' });
+  }
+
+  const { scope, hours: hoursStr } = request.query;
+  const hours = hoursStr ? parseInt(hoursStr) : undefined;
+
+  if (!scope || !['all', 'resolved_only', 'older_than_hours'].includes(scope)) {
+    return reply.status(400).send({ error: 'invalid scope' });
+  }
+
+  let where: string;
+  if (scope === 'resolved_only') {
+    where = `state = 'resolved'`;
+  } else if (scope === 'older_than_hours' && hours) {
+    where = `state IN ('new', 'investigating') AND started_at < NOW() - INTERVAL '${Math.floor(hours)} hours'`;
+  } else {
+    where = `state IN ('new', 'investigating')`;
+  }
+
+  try {
+    const res = await query(`SELECT COUNT(*) AS n FROM incidents WHERE ${where}`);
+    return reply.send({ count: parseInt(res.rows[0]?.n ?? '0', 10) });
+  } catch (err) {
+    return reply.status(500).send({ error: 'Failed to count incidents' });
+  }
+}
+
 // ── Docker container history (time-range, structured) ─────────────────────────
 
 export async function getContainerHistory(
