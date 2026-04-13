@@ -20,6 +20,7 @@ import {
   setCrowdSecMonitor,
   listIncidents, getIncident, claimIncident, resolveIncident, reopenIncident,
   updateIncident, mergeIncidents, splitIncident,
+  bulkResolveIncidents, countBulkResolve,
 } from './api/routes.js';
 import { backfillIncidents }   from './engine/incidents.js';
 import { DailyDigest }         from './engine/digest.js';
@@ -368,6 +369,8 @@ async function start(): Promise<void> {
     server.put('/api/v1/incidents/:id',          updateIncident);
     server.post('/api/v1/incidents/:id/merge',   mergeIncidents);
     server.post('/api/v1/incidents/:id/split',   splitIncident);
+    server.post('/api/v1/incidents/bulk-resolve', bulkResolveIncidents);
+    server.get('/api/v1/incidents/bulk-resolve/count', countBulkResolve);
 
     // Server management
     server.put('/api/v1/servers/:id',              updateServer);
