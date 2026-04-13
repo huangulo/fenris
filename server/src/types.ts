@@ -152,6 +152,11 @@ export interface Config {
     batch_window_ms: number;   // how long to wait before summarising a batch
     cooldown_per_server_ms: number;
   };
+  daily_digest?: {
+    enabled: boolean;
+    time: string;      // "HH:MM" in 24-hour format
+    timezone: string;  // IANA timezone, e.g. "America/Bogota"
+  };
   wazuh?: {
     enabled: boolean;
     manager_url: string;

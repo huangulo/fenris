@@ -128,6 +128,11 @@ ai:
 # Detects when agents go offline, disconnect, or stop sending keepalives.
 # Disabled by default — set enabled: true and provide your Wazuh manager URL.
 # The JWT is stored only in memory and refreshed every 10 minutes.
+daily_digest:
+  enabled: false
+  time: "08:00"          # HH:MM in 24-hour format
+  timezone: "UTC"        # IANA timezone, e.g. "America/New_York", "Europe/London"
+
 wazuh:
   enabled: false
   manager_url: "https://wazuh.example.com:55000"

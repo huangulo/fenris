@@ -22,6 +22,7 @@ import {
   updateIncident, mergeIncidents, splitIncident,
 } from './api/routes.js';
 import { backfillIncidents }   from './engine/incidents.js';
+import { DailyDigest }         from './engine/digest.js';
 import { UptimeMonitor }       from './monitors/uptime.js';
 import { WazuhMonitor }        from './monitors/wazuh.js';
 import { CrowdSecMonitor }     from './monitors/crowdsec.js';
@@ -57,6 +58,7 @@ let summarizer:      Summarizer      | null = null;
 let uptimeMonitor:   UptimeMonitor   | null = null;
 let wazuhMonitor:    WazuhMonitor    | null = null;
 let crowdSecMonitor: CrowdSecMonitor | null = null;
+let dailyDigest:    DailyDigest     | null = null;
 
 async function loadConfig(): Promise<Config> {
   const configPath = process.env.FENRIS_CONFIG || '/app/fenris.yaml';
@@ -407,6 +409,7 @@ async function start(): Promise<void> {
         uptimeMonitor?.stop();
         wazuhMonitor?.stop();
         crowdSecMonitor?.stop();
+        dailyDigest?.stop();
         await closeDatabase();
         await server.close();
         process.exit(0);
@@ -465,6 +468,15 @@ async function start(): Promise<void> {
     } else {
       console.log('[crowdsec] disabled or no instances configured — skipping');
     }
+
+    const digestCfg = config.daily_digest;
+    const { getDispatcher: getDigestDisp } = await import('./api/routes.js');
+    dailyDigest = new DailyDigest({
+      enabled:  digestCfg?.enabled  ?? false,
+      time:     digestCfg?.time     ?? '08:00',
+      timezone: digestCfg?.timezone ?? 'UTC',
+    }, getDigestDisp());
+    dailyDigest.start();
 
   } catch (error) {
     console.error('Failed to start server:', error);
