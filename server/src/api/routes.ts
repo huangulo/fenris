@@ -104,22 +104,22 @@ async function trackContainerEvents(
   if (c.started_at && prev.started_at && c.started_at !== prev.started_at && c.state === 'running') {
     await ins('restart', prev.state, c.state, { started_at: c.started_at });
 
-    // Flapping: ≥3 restarts in last 15 min → warning alert with 30-min cooldown
+    // Flapping: ≥5 restarts in last 30 min → warning alert with 60-min cooldown
     const fKey = `${serverId}:${c.name}`;
     const now  = Date.now();
-    if (now - (flappingCooldowns.get(fKey) ?? 0) > 30 * 60_000) {
+    if (now - (flappingCooldowns.get(fKey) ?? 0) > 60 * 60_000) {
       const result = await query(
-        "SELECT COUNT(*) AS cnt FROM container_events WHERE server_id = $1 AND container_name = $2 AND event_type = 'restart' AND created_at > NOW() - INTERVAL '15 minutes'",
+        "SELECT COUNT(*) AS cnt FROM container_events WHERE server_id = $1 AND container_name = $2 AND event_type = 'restart' AND created_at > NOW() - INTERVAL '30 minutes'",
         [serverId, c.name]
       );
-      if (parseInt(result.rows[0].cnt, 10) >= 3) {
+      if (parseInt(result.rows[0].cnt, 10) >= 5) {
         flappingCooldowns.set(fKey, now);
         const alert: Alert = {
           id: 0, server_id: serverId, severity: 'warning',
-          message: `Container '${c.name}' is flapping (${result.rows[0].cnt} restarts in 15 min)`,
+          message: `Container '${c.name}' is flapping (${result.rows[0].cnt} restarts in 30 min)`,
           metric_type: 'docker',
           actual_value: { restarts: parseInt(result.rows[0].cnt, 10) },
-          threshold_value: { max: 3 },
+          threshold_value: { max: 5 },
           acknowledged: false, created_at: new Date(),
         };
         const ar = await query(
