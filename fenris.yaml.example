@@ -97,11 +97,11 @@ anomaly_detection:
   # for statistically unusual but operationally meaningless low values.
   # Network metrics are always skipped regardless of these settings.
   floors:
-    cpu:           50   # ignore CPU anomalies at or below 50%
-    memory:        60   # ignore memory anomalies at or below 60%
-    disk:          70   # ignore disk anomalies at or below 70%
-    docker_cpu:    30   # ignore container CPU anomalies at or below 30%
-    docker_memory: 40   # ignore container memory anomalies at or below 40%
+    cpu:           80   # ignore CPU anomalies at or below 80%
+    memory:        85   # ignore memory anomalies at or below 85%
+    disk:          80   # ignore disk anomalies at or below 80%
+    docker_cpu:    75   # ignore container CPU anomalies at or below 75%
+    docker_memory: 70   # ignore container memory anomalies at or below 70%
 
 # AI Incident Summaries
 # Uses the OpenAI API (or any OpenAI-compatible endpoint).

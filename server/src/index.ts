@@ -99,7 +99,7 @@ async function loadConfig(): Promise<Config> {
       anomaly_detection: {
         enabled: true, algorithm: 'zscore', zscore_threshold: 3.5,
         window_size: 100, min_samples: 60,
-        floors: { cpu: 50, memory: 60, disk: 70, docker_cpu: 30, docker_memory: 40 },
+        floors: { cpu: 80, memory: 85, disk: 80, docker_cpu: 75, docker_memory: 70 },
       },
       predictions: {
         enabled: true, interval: '5m',
