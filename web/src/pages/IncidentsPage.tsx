@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { IncidentRow, AlertRow, ServerRow } from '../types';
 import { apiFetch } from '../api';
 import { fmtRelativeTime } from '../utils';
+import { useAuth, hasRole } from '../auth';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -25,10 +26,13 @@ function stateLabel(state: IncidentRow['state']) {
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
 
-function Toast({ msg, onClose }: { msg: string; onClose: () => void }) {
+function Toast({ msg, onClose, variant = 'error' }: { msg: string; onClose: () => void; variant?: 'error' | 'success' }) {
   useEffect(() => { const t = setTimeout(onClose, 4000); return () => clearTimeout(t); }, [onClose]);
+  const cls = variant === 'success'
+    ? 'bg-emerald-900/90 border-emerald-700/60 text-emerald-200'
+    : 'bg-red-900/90 border-red-700/60 text-red-200';
   return (
-    <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-red-900/90 border border-red-700/60 text-red-200 text-xs font-mono px-4 py-2 rounded-lg shadow-xl">
+    <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-50 border text-xs font-mono px-4 py-2 rounded-lg shadow-xl ${cls}`}>
       {msg}
     </div>
   );
@@ -513,6 +517,142 @@ function TimelineView({ incidents, onClaim, onResolve, onReopen, onRelease, onCl
   );
 }
 
+// ── Bulk-resolve confirmation modal ───────────────────────────────────────────
+
+type BulkScope = 'all' | 'resolved_only' | 'older_than_hours';
+
+const SCOPE_LABELS: Record<BulkScope, string> = {
+  all:               'Mark all as resolved',
+  resolved_only:     'Clear resolved column only',
+  older_than_hours:  'Clear incidents older than 24h',
+};
+
+interface BulkResolveModalProps {
+  scope:     BulkScope;
+  onConfirm: () => Promise<void>;
+  onCancel:  () => void;
+}
+
+function BulkResolveModal({ scope, onConfirm, onCancel }: BulkResolveModalProps) {
+  const [count, setCount]   = useState<number | null>(null);
+  const [busy, setBusy]     = useState(false);
+  const [error, setError]   = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const hours = scope === 'older_than_hours' ? 24 : undefined;
+    const qs = `scope=${scope}${hours != null ? `&hours=${hours}` : ''}`;
+    apiFetch(`/api/v1/incidents/bulk-resolve/count?${qs}`)
+      .then(r => r.ok ? r.json() : Promise.reject())
+      .then(d => { if (!cancelled) setCount(d.count); })
+      .catch(() => { if (!cancelled) setCount(null); });
+    return () => { cancelled = true; };
+  }, [scope]);
+
+  const handleConfirm = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await onConfirm();
+    } catch {
+      setError('Action failed — check your permissions.');
+      setBusy(false);
+    }
+  };
+
+  const countText = count === null ? '…' : count.toString();
+  const what = scope === 'resolved_only'
+    ? `clear ${countText} already-resolved incidents`
+    : scope === 'older_than_hours'
+      ? `resolve ${countText} incidents older than 24 hours`
+      : `resolve all ${countText} active incidents`;
+
+  return (
+    <div
+      className="fixed inset-0 z-60 bg-black/70 flex items-center justify-center px-4"
+      onClick={e => { if (e.target === e.currentTarget) onCancel(); }}
+    >
+      <div className="bg-[#0e1420] border border-gray-800/80 rounded-xl w-full max-w-md shadow-2xl p-6">
+        <h2 className="text-sm font-semibold text-white mb-1">{SCOPE_LABELS[scope]}</h2>
+        <p className="text-xs text-gray-400 mb-5">
+          This will <span className="text-white font-medium">{what}</span> and acknowledge their alerts. This cannot be undone.
+        </p>
+        {error && (
+          <p className="text-xs text-red-400 mb-3">{error}</p>
+        )}
+        <div className="flex gap-3 justify-end">
+          <button
+            onClick={onCancel}
+            className="text-xs font-medium px-4 py-1.5 rounded bg-gray-800/60 border border-gray-700/60 text-gray-400 hover:bg-gray-700/60 transition-colors"
+          >Cancel</button>
+          <button
+            onClick={handleConfirm}
+            disabled={busy || count === 0}
+            className="text-xs font-medium px-4 py-1.5 rounded bg-red-500/15 border border-red-700/50 text-red-400 hover:bg-red-500/25 transition-colors disabled:opacity-40"
+          >
+            {busy ? 'Working…' : count === 0 ? 'Nothing to clear' : 'Confirm'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Clear dropdown ─────────────────────────────────────────────────────────────
+
+interface ClearDropdownProps {
+  onSelect: (scope: BulkScope) => void;
+}
+
+function ClearDropdown({ onSelect }: ClearDropdownProps) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const options: { scope: BulkScope; label: string }[] = [
+    { scope: 'all',              label: 'Mark all as resolved' },
+    { scope: 'resolved_only',    label: 'Clear resolved column only' },
+    { scope: 'older_than_hours', label: 'Clear incidents older than 24h' },
+  ];
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-gray-800/60 border border-gray-700/60 text-gray-400 hover:bg-gray-700/60 hover:text-gray-300 transition-colors"
+      >
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/>
+        </svg>
+        Clear
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="6 9 12 15 18 9"/>
+        </svg>
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-50 bg-[#0e1420] border border-gray-800/80 rounded-lg shadow-xl min-w-[220px] overflow-hidden">
+          {options.map(o => (
+            <button
+              key={o.scope}
+              onClick={() => { setOpen(false); onSelect(o.scope); }}
+              className="w-full text-left text-xs text-gray-400 hover:text-white hover:bg-gray-800/60 px-4 py-2.5 transition-colors"
+            >{o.label}</button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main IncidentsPage ────────────────────────────────────────────────────────
 
 interface IncidentsPageProps {
@@ -521,14 +661,19 @@ interface IncidentsPageProps {
 }
 
 export function IncidentsPage({ servers, onActiveCountChange }: IncidentsPageProps) {
-  const [incidents, setIncidents] = useState<IncidentRow[]>([]);
-  const [loading, setLoading]     = useState(true);
-  const [viewMode, setViewMode]   = useState<'kanban' | 'timeline'>('kanban');
-  const [filterServer, setFilterServer] = useState<number | null>(null);
+  const { user }                          = useAuth();
+  const isAdmin                           = hasRole(user, 'admin');
+  const [incidents, setIncidents]         = useState<IncidentRow[]>([]);
+  const [loading, setLoading]             = useState(true);
+  const [viewMode, setViewMode]           = useState<'kanban' | 'timeline'>('kanban');
+  const [filterServer, setFilterServer]   = useState<number | null>(null);
   const [modalIncident, setModalIncident] = useState<IncidentRow | null>(null);
-  const [toast, setToast]               = useState<string | null>(null);
+  const [toast, setToast]                 = useState<string | null>(null);
+  const [toastVariant, setToastVariant]   = useState<'error' | 'success'>('error');
+  const [bulkScope, setBulkScope]         = useState<BulkScope | null>(null);
 
-  const showError = useCallback((msg: string) => setToast(msg), []);
+  const showError   = useCallback((msg: string) => { setToastVariant('error');   setToast(msg); }, []);
+  const showSuccess = useCallback((msg: string) => { setToastVariant('success'); setToast(msg); }, []);
 
   const load = useCallback(async () => {
     try {
@@ -582,6 +727,20 @@ export function IncidentsPage({ servers, onActiveCountChange }: IncidentsPagePro
 
   const openModal = (inc: IncidentRow) => setModalIncident(inc);
   const closeModal = () => { setModalIncident(null); load(); };
+
+  const executeBulkResolve = useCallback(async () => {
+    if (!bulkScope) return;
+    const hours = bulkScope === 'older_than_hours' ? 24 : undefined;
+    const res = await apiFetch('/api/v1/incidents/bulk-resolve', {
+      method: 'POST',
+      body: JSON.stringify({ scope: bulkScope, ...(hours != null ? { hours } : {}) }),
+    });
+    if (!res.ok) throw new Error('bulk resolve failed');
+    const { resolved } = await res.json();
+    setBulkScope(null);
+    await load();
+    showSuccess(`Cleared ${resolved} incident${resolved !== 1 ? 's' : ''}.`);
+  }, [bulkScope, load, showSuccess]);
 
   // ── Derived ────────────────────────────────────────────────────────────────
 
@@ -638,6 +797,9 @@ export function IncidentsPage({ servers, onActiveCountChange }: IncidentsPagePro
             >{m}</button>
           ))}
         </div>
+
+        {/* Admin-only: Clear dropdown */}
+        {isAdmin && <ClearDropdown onSelect={setBulkScope} />}
 
         {/* Server filter */}
         <select
@@ -707,8 +869,17 @@ export function IncidentsPage({ servers, onActiveCountChange }: IncidentsPagePro
         />
       )}
 
+      {/* Bulk-resolve confirmation modal */}
+      {bulkScope && (
+        <BulkResolveModal
+          scope={bulkScope}
+          onConfirm={executeBulkResolve}
+          onCancel={() => setBulkScope(null)}
+        />
+      )}
+
       {/* Toast */}
-      {toast && <Toast msg={toast} onClose={() => setToast(null)} />}
+      {toast && <Toast msg={toast} onClose={() => setToast(null)} variant={toastVariant} />}
     </div>
   );
 }
