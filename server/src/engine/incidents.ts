@@ -21,12 +21,12 @@ export async function attachAlertToIncident(
   message:    string,
 ): Promise<void> {
   try {
-    // Look for an active incident on this server started within the last 5 minutes
+    // Look for an active incident on this server started within the last 30 minutes
     const existing = await query(
       `SELECT id, severity FROM incidents
        WHERE server_id = $1
          AND state != 'resolved'
-         AND started_at > NOW() - INTERVAL '5 minutes'
+         AND started_at > NOW() - INTERVAL '30 minutes'
        ORDER BY started_at DESC LIMIT 1`,
       [serverId]
     );
@@ -126,7 +126,7 @@ export async function backfillIncidents(): Promise<void> {
       return;
     }
 
-    // Group into 5-minute windows per server
+    // Group into 30-minute windows per server
     const openIncidents = new Map<number, { id: number; severity: Severity; windowEnd: Date }>();
 
     for (const alert of alertsRes.rows) {
@@ -139,7 +139,7 @@ export async function backfillIncidents(): Promise<void> {
         // Attach to existing backfill incident
         const merged = maxSeverity(open.severity, severity);
         open.severity   = merged;
-        open.windowEnd  = new Date(Math.max(open.windowEnd.getTime(), createdAt.getTime() + 5 * 60_000));
+        open.windowEnd  = new Date(Math.max(open.windowEnd.getTime(), createdAt.getTime() + 30 * 60_000));
 
         await query(
           `UPDATE incidents SET alert_count = alert_count + 1, severity = $1, updated_at = NOW() WHERE id = $2`,
@@ -170,7 +170,7 @@ export async function backfillIncidents(): Promise<void> {
         openIncidents.set(serverId, {
           id:        incidentId,
           severity,
-          windowEnd: new Date(createdAt.getTime() + 5 * 60_000),
+          windowEnd: new Date(createdAt.getTime() + 30 * 60_000),
         });
         await query('UPDATE alerts SET incident_id = $1 WHERE id = $2', [incidentId, alert.id]);
       }
