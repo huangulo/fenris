@@ -113,12 +113,18 @@ export interface Config {
     min_samples: number;
     /** Minimum absolute value below which Z-score detection is skipped entirely. */
     floors?: {
-      cpu:           number;  // default 50
-      memory:        number;  // default 60
-      disk:          number;  // default 70
-      docker_cpu:    number;  // default 30
-      docker_memory: number;  // default 40
+      cpu:           number;  // default 80
+      memory:        number;  // default 85
+      disk:          number;  // default 80
+      docker_cpu:    number;  // default 75
+      docker_memory: number;  // default 70
     };
+    /**
+     * Glob patterns for container names to skip from anomaly detection entirely.
+     * Containers designed to spike periodically (agents, exporters, cron jobs)
+     * should be listed here to prevent false-positive anomaly alerts.
+     */
+    exclude_containers?: string[];
   };
   retention?: {
     metrics_days: number;
