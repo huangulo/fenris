@@ -58,10 +58,13 @@ services:
     ports:
       - '8081:80'
     depends_on:
-      - server
+      server:
+        condition: service_healthy
     restart: unless-stopped
     networks:
       - fenris
+    labels:
+      - "autoheal=true"
 
   # ── Optional: built-in agent (monitors the host running the stack) ─────────────
   # To use: copy agent-local/fenris-agent.yaml.example → agent-local/fenris-agent.yaml
@@ -72,7 +75,7 @@ services:
       context: ./agent
     environment:
       # Set HOST_IP to your host's LAN IP if auto-detection picks the wrong interface.
-      # HOST_IP: 192.168.1.42
+      HOST_IP: 100.90.129.230
     volumes:
       - ./agent-local/fenris-agent.yaml:/app/fenris-agent.yaml:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
