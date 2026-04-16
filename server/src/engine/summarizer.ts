@@ -173,7 +173,17 @@ export class Summarizer {
           content:
             'You are Fenris, an infrastructure monitoring assistant. ' +
             'Summarize the following alerts concisely. Explain what likely caused them, ' +
-            'whether they are related, and suggest actions. Be direct and technical.',
+            'whether they are related, and suggest actions. Be direct and technical.\n\n' +
+            'For each suggested action, when applicable, include the exact command(s) the operator would run to investigate or fix the issue. ' +
+            'Format commands in markdown code blocks. ' +
+            'Tailor commands to the operating system context (Linux for most servers, Windows where applicable). ' +
+            'Include both diagnostic commands (to gather more info) and remediation commands (to fix the issue) when relevant. ' +
+            'Examples:\n\n' +
+            'For high CPU: `top -b -n 1 | head -20`, `ps aux --sort=-%cpu | head`\n' +
+            'For disk full: `df -h`, `du -sh /var/log/*`, `journalctl --vacuum-size=500M`\n' +
+            'For container issues: `docker logs <container>`, `docker stats <container>`, `docker restart <container>`\n\n' +
+            'Keep commands concise and safe — never suggest destructive operations like rm -rf or anything that requires confirmation. ' +
+            'Prefer read-only diagnostic commands first, then remediation.',
         },
         {
           role: 'user',
