@@ -48,3 +48,4 @@ temp/
 agent-local/
 .claude/
 agent-windows/*.exe
+fenris.yaml
