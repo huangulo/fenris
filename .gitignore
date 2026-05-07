@@ -47,3 +47,4 @@ tmp/
 temp/
 agent-local/
 .claude/
+agent-windows/*.exe

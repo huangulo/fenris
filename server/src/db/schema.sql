@@ -47,6 +47,8 @@ CREATE INDEX IF NOT EXISTS idx_metrics_server_id ON metrics(server_id);
 CREATE INDEX IF NOT EXISTS idx_metrics_type ON metrics(metric_type);
 CREATE INDEX IF NOT EXISTS idx_metrics_timestamp ON metrics(timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_metrics_server_timestamp ON metrics(server_id, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_metrics_docker_server_ts ON metrics (server_id, timestamp DESC) WHERE metric_type = 'docker';
+CREATE INDEX IF NOT EXISTS idx_metrics_type_server_ts ON metrics (metric_type, server_id, timestamp DESC);
 
 -- Alerts table: Generated alerts
 CREATE TABLE IF NOT EXISTS alerts (
