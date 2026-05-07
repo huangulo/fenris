@@ -506,9 +506,14 @@ export async function getDockerContainers(request: FastifyRequest, reply: Fastif
     } else {
       // One latest snapshot per server, then merge all container arrays
       result = await query(
-        `SELECT DISTINCT ON (server_id) value->'docker' AS containers, timestamp
-         FROM metrics WHERE metric_type = 'docker'
-         ORDER BY server_id, timestamp DESC`
+        `WITH server_ids AS (SELECT id FROM servers)
+         SELECT s.id AS server_id, m.value->'docker' AS containers, m.timestamp
+         FROM server_ids s
+         LEFT JOIN LATERAL (
+           SELECT value, timestamp FROM metrics
+           WHERE server_id = s.id AND metric_type = 'docker'
+           ORDER BY timestamp DESC LIMIT 1
+         ) m ON true`
       );
     }
     if (result.rows.length === 0) {
@@ -721,9 +726,14 @@ export async function getStatus(_request: FastifyRequest, reply: FastifyReply): 
   try {
     const [serversRes, dockerRes, monitorsRes, alertsRes, incidentsRes] = await Promise.all([
       query('SELECT COUNT(*) AS total, COUNT(last_heartbeat) FILTER (WHERE last_heartbeat > NOW() - INTERVAL \'90 seconds\') AS online FROM servers'),
-      query(`SELECT DISTINCT ON (server_id) value->'docker' AS containers
-             FROM metrics WHERE metric_type = 'docker'
-             ORDER BY server_id, timestamp DESC`),
+      query(`WITH server_ids AS (SELECT id FROM servers)
+             SELECT s.id AS server_id, m.value->'docker' AS containers, m.timestamp
+             FROM server_ids s
+             LEFT JOIN LATERAL (
+               SELECT value, timestamp FROM metrics
+               WHERE server_id = s.id AND metric_type = 'docker'
+               ORDER BY timestamp DESC LIMIT 1
+             ) m ON true`),
       query('SELECT is_up FROM (SELECT DISTINCT ON (monitor_id) is_up FROM monitor_checks ORDER BY monitor_id, checked_at DESC) sub'),
       query('SELECT COUNT(*) AS total FROM alerts WHERE acknowledged = FALSE'),
       query(`SELECT
@@ -1839,11 +1849,13 @@ export async function getDockerTop(
 
     const result = await query(
       `WITH latest_docker AS (
-         SELECT DISTINCT ON (server_id)
-           server_id, value->'docker' AS containers
-         FROM metrics
-         WHERE metric_type = 'docker'
-         ORDER BY server_id, timestamp DESC
+         SELECT s.id AS server_id, m.value->'docker' AS containers
+         FROM servers s
+         LEFT JOIN LATERAL (
+           SELECT value FROM metrics
+           WHERE server_id = s.id AND metric_type = 'docker'
+           ORDER BY timestamp DESC LIMIT 1
+         ) m ON true
        )
        SELECT
          s.id   AS server_id,
