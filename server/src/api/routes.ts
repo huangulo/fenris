@@ -208,12 +208,19 @@ export async function ingestMetrics(metrics: Metric[]): Promise<{ anomaliesDetec
     prevContainers.map(c => [c.name, { state: c.state, image_hash: c.image_hash, started_at: c.started_at, image: c.image }])
   );
 
-  for (const metric of metrics) {
-    await query(
-      'INSERT INTO metrics (server_id, metric_type, value, timestamp) VALUES ($1, $2, $3::jsonb, $4)',
-      [metric.server_id, metric.metric_type, JSON.stringify(metric.value), metric.timestamp]
-    );
+  const batchValues: any[] = [];
+  const batchPlaceholders: string[] = [];
+  metrics.forEach((m, i) => {
+    const offset = i * 4;
+    batchPlaceholders.push(`($${offset + 1}, $${offset + 2}, $${offset + 3}::jsonb, $${offset + 4})`);
+    batchValues.push(m.server_id, m.metric_type, JSON.stringify(m.value), m.timestamp);
+  });
+  await query(
+    `INSERT INTO metrics (server_id, metric_type, value, timestamp) VALUES ${batchPlaceholders.join(', ')}`,
+    batchValues
+  );
 
+  for (const metric of metrics) {
     // Network rx_bytes is highly variable (orders-of-magnitude bursts are normal
     // traffic); z-score on raw byte counts produces constant false positives.
     // Skip anomaly detection for network — thresholds are not applicable either.
@@ -876,6 +883,31 @@ export async function getServerStatus(
 // ── Uptime Monitor routes ─────────────────────────────────────────────────────
 
 const MONITOR_UPTIME_SQL = `
+  WITH check_data AS (
+    SELECT
+      monitor_id,
+      is_up,
+      checked_at,
+      CASE WHEN checked_at > NOW() - INTERVAL '24 hours' THEN true ELSE false END AS in_24h,
+      CASE WHEN checked_at > NOW() - INTERVAL '7 days'   THEN true ELSE false END AS in_7d
+    FROM monitor_checks
+    WHERE checked_at > NOW() - INTERVAL '30 days'
+  ),
+  uptime_stats AS (
+    SELECT
+      monitor_id,
+      ROUND(100.0 * COUNT(*) FILTER (WHERE is_up AND in_24h) / NULLIF(COUNT(*) FILTER (WHERE in_24h), 0), 1) AS uptime_24h,
+      ROUND(100.0 * COUNT(*) FILTER (WHERE is_up AND in_7d)  / NULLIF(COUNT(*) FILTER (WHERE in_7d),  0), 1) AS uptime_7d,
+      ROUND(100.0 * COUNT(*) FILTER (WHERE is_up)            / NULLIF(COUNT(*), 0),                        1) AS uptime_30d
+    FROM check_data
+    GROUP BY monitor_id
+  ),
+  latest_check AS (
+    SELECT DISTINCT ON (monitor_id)
+      monitor_id, status_code, response_time_ms, is_up, error, cert_expires_at, checked_at
+    FROM monitor_checks
+    ORDER BY monitor_id, checked_at DESC
+  )
   SELECT
     m.*,
     lc.status_code      AS last_status_code,
@@ -884,26 +916,12 @@ const MONITOR_UPTIME_SQL = `
     lc.error            AS last_error,
     lc.cert_expires_at  AS last_cert_expires_at,
     lc.checked_at       AS last_checked_at,
-    u24.uptime_pct      AS uptime_24h,
-    u7d.uptime_pct      AS uptime_7d,
-    u30d.uptime_pct     AS uptime_30d
+    us.uptime_24h,
+    us.uptime_7d,
+    us.uptime_30d
   FROM monitors m
-  LEFT JOIN LATERAL (
-    SELECT status_code, response_time_ms, is_up, error, cert_expires_at, checked_at
-    FROM monitor_checks WHERE monitor_id = m.id ORDER BY checked_at DESC LIMIT 1
-  ) lc ON true
-  LEFT JOIN LATERAL (
-    SELECT ROUND(100.0 * COUNT(*) FILTER (WHERE is_up) / NULLIF(COUNT(*), 0), 1) AS uptime_pct
-    FROM monitor_checks WHERE monitor_id = m.id AND checked_at > NOW() - INTERVAL '24 hours'
-  ) u24 ON true
-  LEFT JOIN LATERAL (
-    SELECT ROUND(100.0 * COUNT(*) FILTER (WHERE is_up) / NULLIF(COUNT(*), 0), 1) AS uptime_pct
-    FROM monitor_checks WHERE monitor_id = m.id AND checked_at > NOW() - INTERVAL '7 days'
-  ) u7d ON true
-  LEFT JOIN LATERAL (
-    SELECT ROUND(100.0 * COUNT(*) FILTER (WHERE is_up) / NULLIF(COUNT(*), 0), 1) AS uptime_pct
-    FROM monitor_checks WHERE monitor_id = m.id AND checked_at > NOW() - INTERVAL '30 days'
-  ) u30d ON true
+  LEFT JOIN latest_check lc ON lc.monitor_id = m.id
+  LEFT JOIN uptime_stats us ON us.monitor_id = m.id
 `;
 
 export async function listMonitors(_request: FastifyRequest, reply: FastifyReply): Promise<FastifyReply> {
