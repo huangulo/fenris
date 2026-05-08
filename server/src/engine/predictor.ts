@@ -249,11 +249,11 @@ export class Predictor {
   private async run(): Promise<void> {
     try {
       const servers = await query('SELECT id, name FROM servers');
-      for (const s of servers.rows) {
+      await Promise.all(servers.rows.map(async (s) => {
         for (const mt of ['cpu', 'memory', 'disk'] as const) {
           await predictForMetric(s.id, s.name, mt, this.cfg, this.dispatcher);
         }
-      }
+      }));
     } catch (err) {
       console.error('[predictor] run error:', err);
     }
