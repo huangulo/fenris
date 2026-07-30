@@ -11,6 +11,8 @@ RUN pnpm install --frozen-lockfile --ignore-scripts && pnpm approve-builds --all
 COPY . .
 
 # Build with tsup (bundles to dist/index.js)
+ENV CI=true
+ENV PNPM_CONFIG_STRICT_DEP_BUILDS=false
 RUN pnpm run build
 # Copy SQL asset alongside the bundle so readFileSync can find it
 RUN cp src/db/schema.sql dist/schema.sql
