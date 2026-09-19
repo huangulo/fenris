@@ -77,7 +77,7 @@ export function generateToken(user: { id: number; username: string; role: Role }
   return jwt.sign(
     { id: user.id, username: user.username, role: user.role },
     getSecret(),
-    { expiresIn: '24h' }
+    { expiresIn: '30d' }
   );
 }
 
