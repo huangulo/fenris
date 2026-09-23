@@ -49,3 +49,4 @@ agent-local/
 .claude/
 agent-windows/*.exe
 fenris.yaml
+.claude/settings.local.json
