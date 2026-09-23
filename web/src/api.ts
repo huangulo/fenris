@@ -75,14 +75,24 @@ export async function fetchDockerTop(metric: 'cpu' | 'memory' | 'network' = 'cpu
 
 /** POST /api/v1/auth/login — no JWT needed, returns token on success */
 export async function apiLogin(username: string, password: string): Promise<{ token: string; user: { id: number; username: string; role: string } }> {
-  const res = await fetch('/api/v1/auth/login', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password }),
-  });
+  // Network errors and 5xx (e.g. nginx 502 while the server restarts) must not
+  // read like a wrong password
+  const unavailable = 'Server unavailable, try again shortly';
+  let res: Response;
+  try {
+    res = await fetch('/api/v1/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+  } catch {
+    throw new Error(unavailable);
+  }
+  if (res.status >= 500) throw new Error(unavailable);
   if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: 'Login failed' }));
-    throw new Error(body.error ?? `HTTP ${res.status}`);
+    const body = await res.json().catch(() => ({}));
+    const fallback = res.status === 401 ? 'Invalid username or password' : `Login failed (HTTP ${res.status})`;
+    throw new Error(body.error ?? fallback);
   }
   return res.json();
 }
