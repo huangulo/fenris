@@ -187,15 +187,12 @@ async function trackContainerEvents(
   }
 }
 
+type PrevInfo = { state: string; image_hash?: string; started_at?: string; image?: string };
+
 export async function ingestMetrics(metrics: Metric[]): Promise<{ anomaliesDetected: number }> {
   console.log('Received metrics:', metrics.length, 'records');
 
   const serverId = metrics[0]?.server_id ?? 1;
-  // Scope detector keys per server so histories don't bleed across hosts
-  const key = (k: string) => `${serverId}:${k}`;
-
-  type AnomalyEntry = { isAnomaly: boolean; severity: string; value: number; message?: string };
-  const anomalyResults = new Map<string, AnomalyEntry>();
 
   // Pre-fetch last docker snapshot for state-transition detection (before any inserts)
   const prevDockerResult = await query(
@@ -203,7 +200,6 @@ export async function ingestMetrics(metrics: Metric[]): Promise<{ anomaliesDetec
     [serverId]
   );
   const prevContainers: ContainerStats[] = prevDockerResult.rows[0]?.containers ?? [];
-  type PrevInfo = { state: string; image_hash?: string; started_at?: string; image?: string };
   const prevStateMap = new Map<string, PrevInfo>(
     prevContainers.map(c => [c.name, { state: c.state, image_hash: c.image_hash, started_at: c.started_at, image: c.image }])
   );
@@ -219,6 +215,29 @@ export async function ingestMetrics(metrics: Metric[]): Promise<{ anomaliesDetec
     `INSERT INTO metrics (server_id, metric_type, value, timestamp) VALUES ${batchPlaceholders.join(', ')}`,
     batchValues
   );
+
+  // The metrics are stored at this point. Anomaly detection, container events and
+  // alerting must not turn that into a 5xx — the agent would retry and duplicate rows.
+  try {
+    const anomaliesDetected = await analyzeIngestedMetrics(metrics, serverId, prevStateMap);
+    return { anomaliesDetected };
+  } catch (err) {
+    console.error(`[ingest] post-insert processing failed for server_id=${serverId} (metrics stored):`, err);
+    return { anomaliesDetected: 0 };
+  }
+}
+
+/** Post-INSERT processing: anomaly detection, container lifecycle events, heartbeat, alerts. */
+async function analyzeIngestedMetrics(
+  metrics: Metric[],
+  serverId: number,
+  prevStateMap: Map<string, PrevInfo>,
+): Promise<number> {
+  // Scope detector keys per server so histories don't bleed across hosts
+  const key = (k: string) => `${serverId}:${k}`;
+
+  type AnomalyEntry = { isAnomaly: boolean; severity: string; value: number; message?: string };
+  const anomalyResults = new Map<string, AnomalyEntry>();
 
   for (const metric of metrics) {
     // Network rx_bytes is highly variable (orders-of-magnitude bursts are normal
@@ -282,7 +301,7 @@ export async function ingestMetrics(metrics: Metric[]): Promise<{ anomaliesDetec
       }
       // Track containers that disappeared from the snapshot
       for (const [name, prevInfo] of prevStateMap) {
-        if (!newNames.has(name) && !DOCKER_EXCLUDED.has(name)) {
+        if (!newNames.has(name) && !isExcludedContainer(name, config)) {
           query(
             'INSERT INTO container_events (server_id, container_name, event_type, previous_state, new_state, metadata) VALUES ($1, $2, $3, $4, $5, $6::jsonb)',
             [serverId, name, 'removed', prevInfo.state, null, JSON.stringify({})]
@@ -359,7 +378,7 @@ export async function ingestMetrics(metrics: Metric[]): Promise<{ anomaliesDetec
     );
   }
 
-  return { anomaliesDetected: anomalyResults.size };
+  return anomalyResults.size;
 }
 
 interface AgentPayload {
