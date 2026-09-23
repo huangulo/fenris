@@ -6,7 +6,11 @@ RUN corepack enable && corepack prepare pnpm@latest --activate
 WORKDIR /app
 
 COPY package.json ./
-RUN pnpm install
+# Postinstall scripts (esbuild, ssh2, cpu-features, protobufjs) aren't needed; skip
+# them so pnpm doesn't fail with ERR_PNPM_IGNORED_BUILDS in non-interactive builds
+ENV CI=true
+ENV PNPM_CONFIG_STRICT_DEP_BUILDS=false
+RUN pnpm install --ignore-scripts
 
 COPY . .
 

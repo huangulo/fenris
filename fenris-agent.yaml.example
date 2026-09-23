@@ -23,6 +23,11 @@ server_name: my-host
 # Env: FENRIS_COLLECT_INTERVAL
 collect_interval: 30s
 
+# Timeout for each metrics POST, in milliseconds (default: 10000)
+# Must be below collect_interval; larger values are clamped to collect_interval - 1s.
+# Env: FENRIS_REQUEST_TIMEOUT
+request_timeout: 10000
+
 # Enable Docker container monitoring (default: true)
 # Requires access to /var/run/docker.sock — mount it read-only if running in a container.
 # Env: FENRIS_DOCKER_ENABLED

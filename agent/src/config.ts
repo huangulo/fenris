@@ -11,6 +11,7 @@ export interface AgentConfig {
   disk_paths: string[];
   collect_volume_sizes: boolean;
   volume_size_interval: number; // ms, how often to re-measure volume sizes
+  request_timeout: number; // ms, per metrics POST; always < collect_interval
 }
 
 function parseInterval(raw: string | number | undefined, defaultSec: number): number {
@@ -43,16 +44,31 @@ export function loadConfig(): AgentConfig {
   const diskPaths = (raw.disk_paths as string[] | undefined) ??
     (process.env.FENRIS_DISK_PATHS ? process.env.FENRIS_DISK_PATHS.split(',') : ['/']);
 
+  const collectInterval = parseInterval(raw.collect_interval as string | number | undefined ?? process.env.FENRIS_COLLECT_INTERVAL, 30);
+
+  const rawTimeout = raw.request_timeout ?? process.env.FENRIS_REQUEST_TIMEOUT;
+  let requestTimeout = rawTimeout == null ? 10_000 : Number(rawTimeout);
+  if (!Number.isInteger(requestTimeout) || requestTimeout <= 0) {
+    throw new Error(`Invalid request_timeout: "${rawTimeout}". Use a positive integer in milliseconds, e.g. 10000.`);
+  }
+  // A request must finish before the next push is due, otherwise pushes pile up
+  const maxTimeout = Math.max(1_000, collectInterval - 1_000);
+  if (requestTimeout > maxTimeout) {
+    console.warn(`[agent] request_timeout ${requestTimeout}ms must be below collect_interval ${collectInterval}ms — clamping to ${maxTimeout}ms`);
+    requestTimeout = maxTimeout;
+  }
+
   return {
     server_url:       (raw.server_url as string | undefined)       ?? process.env.FENRIS_SERVER_URL       ?? 'http://localhost:3200',
     api_key:          apiKey,
     server_name:      (raw.server_name as string | undefined)      ?? process.env.FENRIS_SERVER_NAME      ?? hostname(),
-    collect_interval: parseInterval(raw.collect_interval as string | number | undefined ?? process.env.FENRIS_COLLECT_INTERVAL, 30),
+    collect_interval: collectInterval,
     docker_enabled:   raw.docker_enabled != null
                         ? Boolean(raw.docker_enabled)
                         : process.env.FENRIS_DOCKER_ENABLED !== 'false',
     disk_paths:       diskPaths,
     collect_volume_sizes: Boolean(raw.collect_volume_sizes ?? false),
     volume_size_interval: parseInterval(raw.volume_size_interval as string | number | undefined, 300), // 5 min default
+    request_timeout:  requestTimeout,
   };
 }

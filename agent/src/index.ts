@@ -1,4 +1,4 @@
-import fetch from 'node-fetch';
+import { Agent, fetch } from 'undici';
 import si from 'systeminformation';
 import os from 'os';
 import { loadConfig } from './config.js';
@@ -48,9 +48,53 @@ async function getHostIP(): Promise<string> {
 const buffer: AgentPayload[] = [];
 let backoffMs = 5_000; // starts at 5s, backs off up to 5 min on persistent failures
 
+// Explicit dispatcher with short keep-alive so idle sockets don't outlive a sleep/network change.
+// Recreated after MAX_CONSECUTIVE_FAILURES transport errors in a row to drop any stale socket.
+const KEEP_ALIVE_TIMEOUT_MS = 5_000;
+const MAX_CONSECUTIVE_FAILURES = 3;
+let requestTimeoutMs = 10_000;
+let dispatcher: Agent;
+let consecutiveFailures = 0;
+
+function createDispatcher(): Agent {
+  return new Agent({
+    keepAliveTimeout: KEEP_ALIVE_TIMEOUT_MS,
+    keepAliveMaxTimeout: KEEP_ALIVE_TIMEOUT_MS,
+    connectTimeout: requestTimeoutMs,
+    headersTimeout: requestTimeoutMs,
+    bodyTimeout: requestTimeoutMs,
+  });
+}
+
+function recordTransportFailure(): void {
+  consecutiveFailures++;
+  if (consecutiveFailures < MAX_CONSECUTIVE_FAILURES) return;
+
+  console.warn(`[agent] ${consecutiveFailures} consecutive push failures — recreating HTTP dispatcher`);
+  const old = dispatcher;
+  dispatcher = createDispatcher();
+  consecutiveFailures = 0;
+  old.destroy().catch(() => { /* already broken, nothing to do */ });
+}
+
+// Prefer the underlying socket error (ECONNREFUSED, UND_ERR_CONNECT_TIMEOUT…) over "fetch failed".
+// DOMExceptions (TimeoutError/AbortError) carry a legacy numeric .code, so only string codes count.
+function errorCode(err: unknown): string {
+  const e = err as { name?: string; code?: unknown; message?: string; cause?: { code?: unknown; name?: string } };
+  const str = (v: unknown) => (typeof v === 'string' && v ? v : undefined);
+  return str(e?.cause?.code) ?? str(e?.code) ?? str(e?.cause?.name) ?? str(e?.name) ?? String(e?.message ?? err);
+}
+
+/**
+ * Returns true once the server has answered, whatever the status: the snapshot is done with.
+ * Only network errors/timeouts (no HTTP response) return false so the caller keeps it for retry.
+ * A 4xx/5xx is not retried — the server may have stored it anyway (duplicates) or will
+ * reject it forever (blocking the backlog).
+ */
 async function postPayload(serverUrl: string, apiKey: string, payload: AgentPayload): Promise<boolean> {
+  const n = payload.metrics.length;
+  const start = Date.now();
   try {
-    console.log(`[agent] POSTing to ${serverUrl}`);
     const res = await fetch(`${serverUrl}/api/v1/metrics`, {
       method: 'POST',
       headers: {
@@ -58,37 +102,45 @@ async function postPayload(serverUrl: string, apiKey: string, payload: AgentPayl
         'X-API-Key': apiKey
       },
       body: JSON.stringify(payload),
-      // 10s timeout via AbortController
-      signal: AbortSignal.timeout(10_000)
+      signal: AbortSignal.timeout(requestTimeoutMs),
+      dispatcher,
     });
+    // Always consume the body so the socket is released back to the pool
+    const body = await res.text();
+    const ms = Date.now() - start;
+    consecutiveFailures = 0; // got an HTTP response, so the connection itself is healthy
 
     if (!res.ok) {
-      console.error(`[agent] server returned ${res.status}: ${await res.text()}`);
-      return false;
+      console.error(`[agent] push rejected: ${n} metrics → HTTP ${res.status} (${ms}ms), snapshot dropped: ${body.slice(0, 200)}`);
+      return true;
     }
 
+    console.log(`[agent] pushed ${n} metrics → HTTP ${res.status} (${ms}ms)`);
     return true;
   } catch (err) {
-    console.error('[agent] POST failed:', (err as Error).message);
+    console.error(`[agent] push failed: ${n} metrics → ${errorCode(err)} (${Date.now() - start}ms)`);
+    recordTransportFailure();
     return false;
   }
 }
 
-async function flush(serverUrl: string, apiKey: string): Promise<void> {
-  if (buffer.length === 0) return;
+/** Returns true when the backlog is empty afterwards; stops at the first network failure. */
+async function flush(serverUrl: string, apiKey: string): Promise<boolean> {
+  if (buffer.length === 0) return true;
   console.log(`[agent] flushing ${buffer.length} buffered snapshot(s)…`);
 
   while (buffer.length > 0) {
     const payload = buffer[0];
-    const ok = await postPayload(serverUrl, apiKey, payload);
-    if (!ok) {
+    const answered = await postPayload(serverUrl, apiKey, payload);
+    if (!answered) {
       console.error(`[agent] flush failed — ${buffer.length} snapshot(s) still buffered`);
-      return;
+      return false;
     }
     buffer.shift();
   }
 
   console.log('[agent] buffer flushed');
+  return true;
 }
 
 async function collect(
@@ -108,8 +160,10 @@ async function collect(
 
 async function run(): Promise<void> {
   const config = loadConfig();
+  requestTimeoutMs = config.request_timeout;
+  dispatcher = createDispatcher();
 
-  console.log(`[agent] starting — server: ${config.server_url}, name: ${config.server_name}, interval: ${config.collect_interval}ms`);
+  console.log(`[agent] starting — server: ${config.server_url}, name: ${config.server_name}, interval: ${config.collect_interval}ms, request timeout: ${requestTimeoutMs}ms`);
 
   const systemCollector = new SystemCollector();
   const dockerCollector = new DockerCollector();
@@ -123,21 +177,26 @@ async function run(): Promise<void> {
     console.log(`[agent] detected host IP: ${hostIP}`);
   }
 
+  let inFlight = false;
   const tick = async () => {
+    if (inFlight) {
+      console.warn('[agent] previous push still in flight — skipping this cycle');
+      return;
+    }
+    inFlight = true;
     console.log('[agent] collecting metrics…');
     try {
       const payload = await collect(systemCollector, dockerCollector, config.server_name, config.disk_paths, hostIP);
       console.log(`[agent] collected ${payload.metrics.length} metrics, sending…`);
 
-      // Try to flush any backlog first
-      if (buffer.length > 0) {
-        await flush(config.server_url, config.api_key);
-      }
+      // Try to flush any backlog first; if the server is still unreachable,
+      // buffer this snapshot too rather than spend a second timeout on it
+      const flushed = await flush(config.server_url, config.api_key);
 
-      const ok = await postPayload(config.server_url, config.api_key, payload);
+      const answered = flushed && await postPayload(config.server_url, config.api_key, payload);
 
-      if (ok) {
-        backoffMs = 5_000; // reset backoff on success
+      if (answered) {
+        backoffMs = 5_000; // reset backoff once the server answers
       } else {
         if (buffer.length < MAX_BUFFER) {
           buffer.push(payload);
@@ -151,6 +210,8 @@ async function run(): Promise<void> {
       }
     } catch (err) {
       console.error('[agent] collection error:', err);
+    } finally {
+      inFlight = false;
     }
   };
 

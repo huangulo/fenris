@@ -13,8 +13,8 @@
   "dependencies": {
     "dockerode": "^4.0.10",
     "js-yaml": "^4.1.0",
-    "node-fetch": "^3.3.2",
-    "systeminformation": "^5.22.0"
+    "systeminformation": "^5.22.0",
+    "undici": "^7.29.1"
   },
   "devDependencies": {
     "@types/dockerode": "^4.0.1",
