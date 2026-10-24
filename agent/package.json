@@ -22,5 +22,11 @@
     "@types/node": "^22.0.0",
     "tsup": "^8.3.0",
     "typescript": "^5.5.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "protobufjs": "^7.5.5",
+      "@grpc/grpc-js": "^1.14.4"
+    }
   }
 }

@@ -102,8 +102,8 @@ CLONE_DIR="$INSTALL_DIR/src"
 
 if [ -d "$CLONE_DIR/.git" ]; then
   info "Updating existing agent source…"
-  git -C "$CLONE_DIR" fetch --depth=1
-  git -C "$CLONE_DIR" checkout
+  git -C "$CLONE_DIR" fetch --depth=1 origin
+  git -C "$CLONE_DIR" reset --hard FETCH_HEAD
 else
   info "Cloning agent source from GitHub (sparse checkout)…"
   rm -rf "$CLONE_DIR"
