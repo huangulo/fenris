@@ -28,7 +28,7 @@ services:
       - PORT=3200
       - NODE_ENV=production
     ports:
-      - '3200:3200'
+      - '100.90.129.230:3200:3200'
     group_add:
       - "${DOCKER_GID:-988}"
     volumes:
@@ -56,7 +56,7 @@ services:
         VITE_API_KEY: ${VITE_API_KEY:-***REMOVED_AGENT_API_KEY***}
     container_name: fenris-web
     ports:
-      - '8081:80'
+      - '100.90.129.230:8081:80'
     depends_on:
       server:
         condition: service_healthy
