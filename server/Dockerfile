@@ -1,21 +1,35 @@
-FROM node:22-alpine
-
+FROM node:22-alpine AS base
 # Install pnpm
 RUN corepack enable && corepack prepare pnpm@10.34.8 --activate
-
 WORKDIR /app
-
 COPY package.json pnpm-lock.yaml ./
+
+# Build stage: full install (incl. dev deps) and tsup bundle
+FROM base AS build
 RUN pnpm install --frozen-lockfile --ignore-scripts && pnpm approve-builds --all || true
-
 COPY . .
-
-# Build with tsup (bundles to dist/index.js)
 ENV CI=true
 ENV PNPM_CONFIG_STRICT_DEP_BUILDS=false
 RUN pnpm run build
 # Copy SQL asset alongside the bundle so readFileSync can find it
 RUN cp src/db/schema.sql dist/schema.sql
+
+# Production dependencies only (no vitest/tsup/typescript in the runtime image)
+FROM base AS prod-deps
+RUN pnpm install --frozen-lockfile --prod --ignore-scripts
+
+FROM node:22-alpine
+WORKDIR /app
+
+# The runtime never needs a package manager; dropping npm/corepack removes
+# their bundled deps (tar etc.) from the image.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+    /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack \
+    /usr/local/bin/yarn /usr/local/bin/yarnpkg /opt/yarn-*
+
+COPY --from=prod-deps /app/node_modules ./node_modules
+COPY --from=build /app/dist ./dist
+COPY package.json ./
 
 # Create logs and data directories, owned by non-root user
 RUN adduser --disabled-password --no-create-home fenris \
