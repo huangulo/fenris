@@ -66,6 +66,7 @@ function resolveCountry(ip: string): string | null {
 
 const MAX_BACKOFF_MS    = 5 * 60_000;   // 5 min
 const ALERT_COOLDOWN_MS = 15 * 60_000;  // 15 min per server
+const UPSERT_BATCH_SIZE = 1000;
 
 // ── CrowdSecMonitor ───────────────────────────────────────────────────────────
 
@@ -176,38 +177,53 @@ export class CrowdSecMonitor {
     state.lastPollAt   = new Date();
     state.isFirstPoll  = false;
 
-    // ── Upsert added decisions ────────────────────────────────────────────────
+    // ── Upsert added decisions (batched) ──────────────────────────────────────
     const newBans: CrowdSecDecision[] = [];
 
-    for (const d of added) {
-      let expiresAt: Date | null = null;
-      if (d.until) {
-        expiresAt = new Date(d.until);
-      } else if (d.duration) {
-        expiresAt = new Date(Date.now() + parseGoDuration(d.duration));
-      }
+    // One row per (IP, scenario): dedupe here too, since Postgres rejects an
+    // ON CONFLICT batch that hits the same row twice. Last one in the stream wins.
+    const byKey = new Map<string, CrowdSecDecision>();
+    for (const d of added) byKey.set(`${d.value}|${d.scenario}`, d);
+    const decisions = [...byKey.values()];
 
-      // Prefer country from the decision payload; fall back to geoip lookup
-      const country = d.country ?? resolveCountry(d.value);
+    for (let i = 0; i < decisions.length; i += UPSERT_BATCH_SIZE) {
+      const batch = decisions.slice(i, i + UPSERT_BATCH_SIZE);
+      const ids: number[] = [], ips: string[] = [], countries: (string | null)[] = [];
+      const scenarios: string[] = [], actions: string[] = [], durations: string[] = [];
+      const expires: (Date | null)[] = [];
+
+      for (const d of batch) {
+        let expiresAt: Date | null = null;
+        if (d.until) {
+          expiresAt = new Date(d.until);
+        } else if (d.duration) {
+          expiresAt = new Date(Date.now() + parseGoDuration(d.duration));
+        }
+
+        ids.push(d.id);
+        ips.push(d.value);
+        // Prefer country from the decision payload; fall back to geoip lookup
+        countries.push(d.country ?? resolveCountry(d.value));
+        scenarios.push(d.scenario);
+        actions.push(d.type);
+        durations.push(d.duration);
+        expires.push(expiresAt);
+
+        if (d.type === 'ban') newBans.push(d);
+      }
 
       await query(
         `INSERT INTO crowdsec_decisions
            (server_id, decision_id, source_ip, source_country, scenario, action, duration, expires_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-         ON CONFLICT (server_id, decision_id) DO UPDATE SET
-           source_ip      = EXCLUDED.source_ip,
+         SELECT $1, * FROM UNNEST($2::int[], $3::varchar[], $4::varchar[], $5::varchar[], $6::varchar[], $7::varchar[], $8::timestamp[])
+         ON CONFLICT (server_id, source_ip, scenario) DO UPDATE SET
+           decision_id    = EXCLUDED.decision_id,
            source_country = EXCLUDED.source_country,
-           scenario       = EXCLUDED.scenario,
            action         = EXCLUDED.action,
            duration       = EXCLUDED.duration,
            expires_at     = EXCLUDED.expires_at`,
-        [
-          state.serverId, d.id, d.value, country,
-          d.scenario, d.type, d.duration, expiresAt,
-        ]
+        [state.serverId, ids, ips, countries, scenarios, actions, durations, expires]
       );
-
-      if (d.type === 'ban') newBans.push(d);
     }
 
     // ── Remove deleted decisions reported by LAPI ─────────────────────────────
