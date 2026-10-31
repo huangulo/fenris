@@ -249,10 +249,33 @@ CREATE TABLE IF NOT EXISTS crowdsec_decisions (
   duration       VARCHAR(50),
   expires_at     TIMESTAMP,
   created_at     TIMESTAMP DEFAULT NOW(),
-  UNIQUE (server_id, decision_id)
+  CONSTRAINT crowdsec_decisions_server_ip_scenario_key UNIQUE NULLS NOT DISTINCT (server_id, source_ip, scenario)
 );
 
+-- Migration: one row per (server, IP, scenario) instead of per LAPI decision id.
+-- Blocklist refreshes re-issue the same bans under new decision ids, which piled up
+-- ~10 rows per IP. Keep the row that expires last, then swap the unique constraint.
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'crowdsec_decisions_server_ip_scenario_key'
+  ) THEN
+    DELETE FROM crowdsec_decisions WHERE id IN (
+      SELECT id FROM (
+        SELECT id, ROW_NUMBER() OVER (
+          PARTITION BY server_id, source_ip, scenario
+          ORDER BY expires_at DESC NULLS FIRST, id DESC
+        ) AS rn
+        FROM crowdsec_decisions
+      ) ranked WHERE rn > 1
+    );
+    ALTER TABLE crowdsec_decisions DROP CONSTRAINT IF EXISTS crowdsec_decisions_server_id_decision_id_key;
+    ALTER TABLE crowdsec_decisions ADD CONSTRAINT crowdsec_decisions_server_ip_scenario_key
+      UNIQUE NULLS NOT DISTINCT (server_id, source_ip, scenario);
+  END IF;
+END $$;
+
 CREATE INDEX IF NOT EXISTS idx_crowdsec_decisions_server_id  ON crowdsec_decisions(server_id);
+CREATE INDEX IF NOT EXISTS idx_crowdsec_decisions_decision_id ON crowdsec_decisions(server_id, decision_id);
 CREATE INDEX IF NOT EXISTS idx_crowdsec_decisions_created_at ON crowdsec_decisions(created_at DESC);
 
 -- ── Support Tickets ───────────────────────────────────────────────────────────

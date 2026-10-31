@@ -141,6 +141,8 @@ async function startRetentionJob(): Promise<void> {
       console.log('Retention: deleted', ce.rowCount, 'container_events older than 90 days');
     } catch (err) { console.error('Retention job error:', err); }
   };
+  // Run once shortly after boot so expired rows don't linger until the first hourly tick.
+  setTimeout(runCleanup, 60_000);
   retentionInterval = setInterval(runCleanup, 60 * 60 * 1000);
 }
 

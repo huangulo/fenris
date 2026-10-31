@@ -8,6 +8,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 let pool: pg.Pool | null = null;
 
+/** Only queries slower than this are logged; logging every query floods the logs. */
+const SLOW_QUERY_MS = 1000;
+
 export function initDatabase(config: Config['server']): void {
   pool = new pg.Pool({
     connectionString: config.database_url,
@@ -26,7 +29,9 @@ export async function query(text: string, params?: any[]): Promise<any> {
   try {
     const res = await pool.query(text, params);
     const duration = Date.now() - start;
-    console.log('Executed query', { text, duration, rows: res.rowCount });
+    if (duration >= SLOW_QUERY_MS) {
+      console.warn('Slow query', { text: text.slice(0, 200), duration, rows: res.rowCount });
+    }
     return res;
   } catch (error) {
     console.error('Database query error', { text, error });
